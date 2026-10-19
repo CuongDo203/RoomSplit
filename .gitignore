@@ -1,0 +1,116 @@
+# ===========================
+# Build output
+# ===========================
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+[Ll]og/
+[Ll]ogs/
+artifacts/
+publish/
+*.dll
+*.exe
+*.pdb
+
+# ===========================
+# Visual Studio / VS Code / Rider
+# ===========================
+.vs/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.DotSettings.user
+_ReSharper*/
+
+# ===========================
+# NuGet
+# ===========================
+*.nupkg
+*.snupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+*.nuget.props
+*.nuget.targets
+project.lock.json
+project.fragment.lock.json
+
+# ===========================
+# Test results & coverage
+# ===========================
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+TestResults/
+
+# ===========================
+# ASP.NET Core secrets & local config
+# ===========================
+appsettings.*.local.json
+appsettings.Local.json
+# Per-developer config: copy from appsettings.Development.example.json
+appsettings.Development.json
+secrets.json
+*.pfx
+*.p12
+.env
+.env.*
+!.env.example
+
+# ===========================
+# EF Core / local databases
+# ===========================
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.mdf
+*.ldf
+*.ndf
+efbundle*
+
+# ===========================
+# Swagger / generated files
+# ===========================
+swagger.json.generated
+wwwroot/swagger/generated/
+
+# ===========================
+# Logs & temp
+# ===========================
+*.log
+*.tmp
+*.temp
+*.cache
+*.swp
+
+# ===========================
+# AI assistant context
+# ===========================
+CLAUDE.md
+
+# ===========================
+# OS files
+# ===========================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini

@@ -1,0 +1,45 @@
+@RoomSplit.Api_HostAddress = http://localhost:5222
+
+GET {{RoomSplit.Api_HostAddress}}/api/v1/categories
+Accept: application/json
+
+###
+
+POST {{RoomSplit.Api_HostAddress}}/api/v1/rooms
+Content-Type: application/json
+
+{
+  "name": "Phòng 101",
+  "address": "12 Nguyễn Trãi, Hà Nội"
+}
+
+###
+
+GET {{RoomSplit.Api_HostAddress}}/api/v1/rooms
+Accept: application/json
+
+###
+
+POST {{RoomSplit.Api_HostAddress}}/api/v1/rooms/1/members
+Content-Type: application/json
+
+{
+  "fullName": "An",
+  "phone": "0901234567"
+}
+
+###
+
+GET {{RoomSplit.Api_HostAddress}}/api/v1/rooms/1/members?status=Active
+Accept: application/json
+
+###
+
+POST {{RoomSplit.Api_HostAddress}}/api/v1/members/1/leave
+Content-Type: application/json
+
+{
+  "leftAt": "2026-10-31"
+}
+
+###
