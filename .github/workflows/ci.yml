@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore RoomSplit.slnx
+
+      - name: Check formatting
+        run: dotnet format RoomSplit.slnx --no-restore --verify-no-changes
+
+      # Release turns warnings into errors (Directory.Build.props).
+      - name: Build
+        run: dotnet build RoomSplit.slnx --no-restore -c Release
+
+      - name: Test
+        run: dotnet test RoomSplit.slnx --no-build -c Release
