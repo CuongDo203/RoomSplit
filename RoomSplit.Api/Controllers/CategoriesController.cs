@@ -10,6 +10,6 @@ namespace RoomSplit.Api.Controllers;
 public class CategoriesController(ICategoryService categoryService) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<List<CategoryResponse>>> GetAll() =>
-        await categoryService.GetAllAsync();
+    public async Task<ActionResult<List<CategoryResponse>>> GetAll(CancellationToken ct) =>
+        await categoryService.GetAllAsync(ct);
 }

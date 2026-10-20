@@ -10,31 +10,31 @@ namespace RoomSplit.Api.Controllers;
 public class RoomsController(IRoomService roomService) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<List<RoomResponse>>> GetAll() =>
-        await roomService.GetAllAsync();
+    public async Task<ActionResult<List<RoomResponse>>> GetAll(CancellationToken ct) =>
+        await roomService.GetAllAsync(ct);
 
     [HttpGet("{id:int}")]
-    public async Task<ActionResult<RoomResponse>> GetById(int id) =>
-        await roomService.GetByIdAsync(id);
+    public async Task<ActionResult<RoomResponse>> GetById(int id, CancellationToken ct) =>
+        await roomService.GetByIdAsync(id, ct);
 
     [HttpPost]
-    public async Task<ActionResult<RoomResponse>> Create(CreateRoomRequest request)
+    public async Task<ActionResult<RoomResponse>> Create(CreateRoomRequest request, CancellationToken ct)
     {
-        var room = await roomService.CreateAsync(request);
+        var room = await roomService.CreateAsync(request, ct);
         return CreatedAtAction(nameof(GetById), new { id = room.Id }, room);
     }
 
     [HttpPut("{id:int}")]
-    public async Task<IActionResult> Update(int id, UpdateRoomRequest request)
+    public async Task<IActionResult> Update(int id, UpdateRoomRequest request, CancellationToken ct)
     {
-        await roomService.UpdateAsync(id, request);
+        await roomService.UpdateAsync(id, request, ct);
         return NoContent();
     }
 
     [HttpDelete("{id:int}")]
-    public async Task<IActionResult> Delete(int id)
+    public async Task<IActionResult> Delete(int id, CancellationToken ct)
     {
-        await roomService.DeleteAsync(id);
+        await roomService.DeleteAsync(id, ct);
         return NoContent();
     }
 }

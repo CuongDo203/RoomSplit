@@ -8,9 +8,9 @@ namespace RoomSplit.Api.Services.Members;
 
 public class MemberService(AppDbContext db) : IMemberService
 {
-    public async Task<List<MemberResponse>> GetByRoomAsync(int roomId, MemberStatus? status)
+    public async Task<List<MemberResponse>> GetByRoomAsync(int roomId, MemberStatus? status, CancellationToken ct)
     {
-        await EnsureRoomExistsAsync(roomId);
+        await EnsureRoomExistsAsync(roomId, ct);
 
         var query = db.Members.Where(m => m.RoomId == roomId);
         if (status is not null)
@@ -21,15 +21,15 @@ public class MemberService(AppDbContext db) : IMemberService
         return await query
             .OrderBy(m => m.Id)
             .Select(m => ToResponse(m))
-            .ToListAsync();
+            .ToListAsync(ct);
     }
 
-    public async Task<MemberResponse> GetByIdAsync(int id) =>
-        ToResponse(await FindMemberAsync(id));
+    public async Task<MemberResponse> GetByIdAsync(int id, CancellationToken ct) =>
+        ToResponse(await FindMemberAsync(id, ct));
 
-    public async Task<MemberResponse> CreateAsync(int roomId, CreateMemberRequest request)
+    public async Task<MemberResponse> CreateAsync(int roomId, CreateMemberRequest request, CancellationToken ct)
     {
-        await EnsureRoomExistsAsync(roomId);
+        await EnsureRoomExistsAsync(roomId, ct);
 
         var member = new Member
         {
@@ -41,24 +41,24 @@ public class MemberService(AppDbContext db) : IMemberService
         };
 
         db.Members.Add(member);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(ct);
 
         return ToResponse(member);
     }
 
-    public async Task UpdateAsync(int id, UpdateMemberRequest request)
+    public async Task UpdateAsync(int id, UpdateMemberRequest request, CancellationToken ct)
     {
-        var member = await FindMemberAsync(id);
+        var member = await FindMemberAsync(id, ct);
 
         member.FullName = request.FullName.Trim();
         member.Phone = request.Phone?.Trim();
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(ct);
     }
 
     // A member who leaves keeps their history; they just can't join new expenses.
-    public async Task<MemberResponse> LeaveAsync(int id, LeaveRoomRequest request)
+    public async Task<MemberResponse> LeaveAsync(int id, LeaveRoomRequest request, CancellationToken ct)
     {
-        var member = await FindMemberAsync(id);
+        var member = await FindMemberAsync(id, ct);
 
         if (member.Status == MemberStatus.Left)
         {
@@ -73,19 +73,19 @@ public class MemberService(AppDbContext db) : IMemberService
 
         member.LeftAt = leftAt;
         member.Status = MemberStatus.Left;
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(ct);
 
         return ToResponse(member);
     }
 
     // Hard delete is only for members added by mistake; anyone with history should leave instead.
-    public async Task DeleteAsync(int id)
+    public async Task DeleteAsync(int id, CancellationToken ct)
     {
-        var member = await FindMemberAsync(id);
+        var member = await FindMemberAsync(id, ct);
 
-        var hasHistory = await db.Expenses.AnyAsync(e => e.PaidBy == id)
-                         || await db.ExpenseShares.AnyAsync(s => s.MemberId == id)
-                         || await db.Settlements.AnyAsync(s => s.PayerId == id || s.PayeeId == id);
+        var hasHistory = await db.Expenses.AnyAsync(e => e.PaidBy == id, ct)
+                         || await db.ExpenseShares.AnyAsync(s => s.MemberId == id, ct)
+                         || await db.Settlements.AnyAsync(s => s.PayerId == id || s.PayeeId == id, ct);
         if (hasHistory)
         {
             throw new ConflictException(
@@ -94,15 +94,15 @@ public class MemberService(AppDbContext db) : IMemberService
         }
 
         db.Members.Remove(member);
-        await db.SaveChangesAsync();
+        await db.SaveChangesAsync(ct);
     }
 
-    private async Task<Member> FindMemberAsync(int id) =>
-        await db.Members.FindAsync(id) ?? throw new NotFoundException($"Member {id} not found.");
+    private async Task<Member> FindMemberAsync(int id, CancellationToken ct) =>
+        await db.Members.FindAsync([id], ct) ?? throw new NotFoundException($"Member {id} not found.");
 
-    private async Task EnsureRoomExistsAsync(int roomId)
+    private async Task EnsureRoomExistsAsync(int roomId, CancellationToken ct)
     {
-        if (!await db.Rooms.AnyAsync(r => r.Id == roomId))
+        if (!await db.Rooms.AnyAsync(r => r.Id == roomId, ct))
         {
             throw new NotFoundException($"Room {roomId} not found.");
         }
