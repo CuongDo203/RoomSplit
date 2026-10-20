@@ -67,6 +67,8 @@ RoomSplit/
 ├── Directory.Build.props     Shared build settings (target framework, nullable, warnings)
 ├── Directory.Packages.props  All NuGet package versions (Central Package Management)
 ├── docker-compose.yml        Local MySQL for development
+├── Dockerfile                Multi-stage image for the API (see docs/docker.md)
+├── .dockerignore             Keeps build output, .git and secrets out of the build context
 ├── .github/workflows/ci.yml  CI: format check, Release build, tests
 └── RoomSplit.Api/
     ├── Common/        Shared helpers (ApiRoutes, IAppClock)
@@ -162,6 +164,28 @@ Then open Swagger UI at **https://localhost:7054/swagger**.
 Health checks: `GET /health/live` (the process is up) and `GET /health/ready` (the database is reachable).
 
 Swagger UI and the OpenAPI document (`/openapi/v1.json`) are only available in the `Development` environment. Sample requests are in [`RoomSplit.Api/RoomSplit.Api.http`](RoomSplit.Api/RoomSplit.Api.http), which you can run from Visual Studio, Rider or the VS Code REST Client.
+
+### 6. Run in Docker (optional)
+
+Build the image from the repository root:
+
+```bash
+docker build -t roomsplit-api:dev .
+```
+
+Run it. The image contains no connection string, so pass it as an environment variable:
+
+```bash
+docker run --rm -d --name roomsplit-api -p 8080:8080   -e ConnectionStrings__DefaultConnection="Server=<host>;Port=3306;Database=roomsplit;User=root;Password=<password>;"   roomsplit-api:dev
+
+curl http://localhost:8080/health/live
+```
+
+- The container listens on port **8080** (HTTP only) and runs as the non-root user `app`.
+- It runs in the `Production` environment, so Swagger UI is off. Add `-e ASPNETCORE_ENVIRONMENT=Development` to enable it.
+- Inside the container, `localhost` is the container itself, not your machine. Connecting to the MySQL container from `docker-compose.yml` is not wired up yet.
+
+Design notes: [`docs/docker.md`](docs/docker.md). Docker concepts: [`docs/docker-basics.md`](docs/docker-basics.md).
 
 ## API overview
 
