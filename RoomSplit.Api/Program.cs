@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using RoomSplit.Api.Common;
 using RoomSplit.Api.Data;
 using RoomSplit.Api.Exceptions;
 using RoomSplit.Api.Services.Categories;
@@ -16,6 +17,11 @@ var connectionString = builder.Configuration.GetConnectionString("DefaultConnect
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)))
            .UseSnakeCaseNamingConvention());
+
+// Fails fast at startup if the configured time zone id is unknown on this OS.
+var appTimeZone = TimeZoneInfo.FindSystemTimeZoneById(builder.Configuration["App:TimeZone"] ?? "Asia/Ho_Chi_Minh");
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IAppClock>(sp => new AppClock(sp.GetRequiredService<TimeProvider>(), appTimeZone));
 
 builder.Services.AddScoped<IRoomService, RoomService>();
 builder.Services.AddScoped<IMemberService, MemberService>();

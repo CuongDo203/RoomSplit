@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using RoomSplit.Api.Common;
 using RoomSplit.Api.Data;
 using RoomSplit.Api.Dtos;
 using RoomSplit.Api.Entities;
@@ -6,7 +7,7 @@ using RoomSplit.Api.Exceptions;
 
 namespace RoomSplit.Api.Services.Members;
 
-public class MemberService(AppDbContext db) : IMemberService
+public class MemberService(AppDbContext db, IAppClock clock) : IMemberService
 {
     public async Task<List<MemberResponse>> GetByRoomAsync(int roomId, MemberStatus? status, CancellationToken ct)
     {
@@ -36,7 +37,7 @@ public class MemberService(AppDbContext db) : IMemberService
             RoomId = roomId,
             FullName = request.FullName.Trim(),
             Phone = request.Phone?.Trim(),
-            JoinedAt = request.JoinedAt ?? DateOnly.FromDateTime(DateTime.Today),
+            JoinedAt = request.JoinedAt ?? clock.Today,
             Status = MemberStatus.Active
         };
 
@@ -65,7 +66,7 @@ public class MemberService(AppDbContext db) : IMemberService
             throw new ConflictException("Member already left", $"Member {id} left the room on {member.LeftAt:yyyy-MM-dd}.");
         }
 
-        var leftAt = request.LeftAt ?? DateOnly.FromDateTime(DateTime.Today);
+        var leftAt = request.LeftAt ?? clock.Today;
         if (member.JoinedAt is not null && leftAt < member.JoinedAt)
         {
             throw new BusinessRuleException("Invalid leave date", "LeftAt cannot be earlier than JoinedAt.");
