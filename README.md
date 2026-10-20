@@ -64,8 +64,12 @@ Business rules:
 ```
 RoomSplit/
 ├── RoomSplit.slnx
+├── Directory.Build.props     Shared build settings (target framework, nullable, warnings)
+├── Directory.Packages.props  All NuGet package versions (Central Package Management)
+├── docker-compose.yml        Local MySQL for development
+├── .github/workflows/ci.yml  CI: format check, Release build, tests
 └── RoomSplit.Api/
-    ├── Common/        Shared constants (ApiRoutes)
+    ├── Common/        Shared helpers (ApiRoutes, IAppClock)
     ├── Controllers/   Thin HTTP layer: calls services, returns results
     ├── Data/          AppDbContext (Fluent API configuration, seed data)
     ├── Dtos/          Request/response records (entities are never exposed)
@@ -84,14 +88,21 @@ Requests flow from the controller to the service to `AppDbContext`. Services rep
 - `ConflictException` → 409
 - `BusinessRuleException` → 400
 
-`AppExceptionHandler` turns these into [ProblemDetails](https://www.rfc-editor.org/rfc/rfc9457) responses.
+`AppExceptionHandler` turns these into [ProblemDetails](https://www.rfc-editor.org/rfc/rfc9457) responses. It also maps MySQL foreign-key and duplicate-key violations (errors 1451, 1452, 1062) to 409, as a safety net for concurrent requests.
 
 ## Getting started
 
 ### 1. Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- MySQL 8.x running locally, or reachable over the network. The MySQL user needs permission to create the database.
+- MySQL 8.x running locally, or reachable over the network. The MySQL user needs permission to create the database. If you have Docker, you can start one with the bundled compose file:
+
+  ```bash
+  cp .env.example .env      # then set MYSQL_ROOT_PASSWORD
+  docker compose up -d
+  ```
+
+  If a local MySQL already uses port 3306, set `MYSQL_PORT=3307` in `.env` and use `Port=3307` in the connection string.
 - The EF Core CLI, **version 9**:
 
   ```bash
@@ -148,6 +159,8 @@ dotnet run --launch-profile https
 
 Then open Swagger UI at **https://localhost:7054/swagger**.
 
+Health checks: `GET /health/live` (the process is up) and `GET /health/ready` (the database is reachable).
+
 Swagger UI and the OpenAPI document (`/openapi/v1.json`) are only available in the `Development` environment. Sample requests are in [`RoomSplit.Api/RoomSplit.Api.http`](RoomSplit.Api/RoomSplit.Api.http), which you can run from Visual Studio, Rider or the VS Code REST Client.
 
 ## API overview
@@ -161,7 +174,7 @@ All endpoints are under `/api/v1`. The prefix is defined once in `Common/ApiRout
 | GET | `/api/v1/rooms/{id}` | Get a room |
 | POST | `/api/v1/rooms` | Create a room |
 | PUT | `/api/v1/rooms/{id}` | Update a room |
-| DELETE | `/api/v1/rooms/{id}` | Delete a room. Returns 409 if the room has members or expenses |
+| DELETE | `/api/v1/rooms/{id}` | Delete a room. Returns 409 if the room has members, expenses or settlements |
 | GET | `/api/v1/rooms/{roomId}/members?status=Active` | List a room's members. The `status` filter is optional |
 | POST | `/api/v1/rooms/{roomId}/members` | Add a member to a room |
 | GET | `/api/v1/members/{id}` | Get a member |
@@ -192,4 +205,8 @@ Commit the generated files in `Migrations/`.
 - **Dates:** `DateOnly` for business dates, `DateTime` for timestamps.
 - **Delete behavior:** `Restrict` everywhere to preserve history. The one exception is `expense_shares → expenses`, which cascades.
 - **Layering:** controllers never use `AppDbContext` directly. All queries and business rules go in `Services/<Feature>/` as an `IXxxService` interface plus an `XxxService` implementation, registered as scoped services in `Program.cs`.
+- **Package versions:** set in `Directory.Packages.props` only. Csproj files reference packages without a version.
+- **Cancellation:** every controller action takes a `CancellationToken ct` and passes it on. Every service method takes a required `CancellationToken ct` and passes it to every EF call.
+- **"Today":** never use `DateTime.Today` or `DateTime.Now` for business dates. Inject `IAppClock` and use `clock.Today`. It uses the time zone in `App:TimeZone` (default `Asia/Ho_Chi_Minh`), whatever the server's own time zone is.
+- **Warnings:** Release builds (and CI) treat warnings as errors. Run `dotnet format` before committing.
 - **Routes:** never hard-code the `api/...` prefix. Use `ApiRoutes.Base`, for example `[Route($"{ApiRoutes.Base}/rooms")]`.
