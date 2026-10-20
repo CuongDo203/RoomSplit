@@ -9,4 +9,5 @@ public class Room
 
     public ICollection<Member> Members { get; set; } = new List<Member>();
     public ICollection<Expense> Expenses { get; set; } = new List<Expense>();
+    public ICollection<Settlement> Settlements { get; set; } = new List<Settlement>();
 }

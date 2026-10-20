@@ -56,10 +56,11 @@ public class RoomService(AppDbContext db) : IRoomService
         var room = await db.Rooms.FindAsync([id], ct) ?? throw RoomNotFound(id);
 
         var hasHistory = await db.Members.AnyAsync(m => m.RoomId == id, ct)
-                         || await db.Expenses.AnyAsync(e => e.RoomId == id, ct);
+                         || await db.Expenses.AnyAsync(e => e.RoomId == id, ct)
+                         || await db.Settlements.AnyAsync(s => s.RoomId == id, ct);
         if (hasHistory)
         {
-            throw new ConflictException("Room is in use", "Cannot delete a room that has members or expenses.");
+            throw new ConflictException("Room is in use", "Cannot delete a room that has members, expenses or settlements.");
         }
 
         db.Rooms.Remove(room);

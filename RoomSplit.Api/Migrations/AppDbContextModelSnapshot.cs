@@ -129,8 +129,8 @@ namespace RoomSplit.Api.Migrations
                     b.HasIndex("PaidBy")
                         .HasDatabaseName("ix_expenses_paid_by");
 
-                    b.HasIndex("RoomId")
-                        .HasDatabaseName("ix_expenses_room_id");
+                    b.HasIndex("RoomId", "ExpenseDate")
+                        .HasDatabaseName("ix_expenses_room_id_expense_date");
 
                     b.ToTable("expenses", null, t =>
                         {
@@ -271,6 +271,10 @@ namespace RoomSplit.Api.Migrations
                         .HasColumnType("int")
                         .HasColumnName("payer_id");
 
+                    b.Property<int>("RoomId")
+                        .HasColumnType("int")
+                        .HasColumnName("room_id");
+
                     b.Property<DateOnly>("SettledAt")
                         .HasColumnType("date")
                         .HasColumnName("settled_at");
@@ -283,6 +287,9 @@ namespace RoomSplit.Api.Migrations
 
                     b.HasIndex("PayerId")
                         .HasDatabaseName("ix_settlements_payer_id");
+
+                    b.HasIndex("RoomId", "SettledAt")
+                        .HasDatabaseName("ix_settlements_room_id_settled_at");
 
                     b.ToTable("settlements", null, t =>
                         {
@@ -371,9 +378,18 @@ namespace RoomSplit.Api.Migrations
                         .IsRequired()
                         .HasConstraintName("fk_settlements_members_payer_id");
 
+                    b.HasOne("RoomSplit.Api.Entities.Room", "Room")
+                        .WithMany("Settlements")
+                        .HasForeignKey("RoomId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("fk_settlements_rooms_room_id");
+
                     b.Navigation("Payee");
 
                     b.Navigation("Payer");
+
+                    b.Navigation("Room");
                 });
 
             modelBuilder.Entity("RoomSplit.Api.Entities.Category", b =>
@@ -402,6 +418,8 @@ namespace RoomSplit.Api.Migrations
                     b.Navigation("Expenses");
 
                     b.Navigation("Members");
+
+                    b.Navigation("Settlements");
                 });
 #pragma warning restore 612, 618
         }

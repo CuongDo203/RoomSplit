@@ -57,6 +57,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             e.Property(x => x.Description).HasMaxLength(255);
             e.Property(x => x.SplitType).HasConversion<string>().HasMaxLength(20);
 
+            // Listing/filtering a room's expenses by date range.
+            e.HasIndex(x => new { x.RoomId, x.ExpenseDate });
+
             e.HasOne(x => x.Room)
                 .WithMany(r => r.Expenses)
                 .HasForeignKey(x => x.RoomId)
@@ -101,6 +104,15 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
             e.Property(s => s.Amount).HasPrecision(12, 0);
             e.Property(s => s.Note).HasMaxLength(255);
+
+            e.HasIndex(s => new { s.RoomId, s.SettledAt });
+
+            // room_id is stored (not derived via members) so settlements stay attributable
+            // to a room once a member can belong to several rooms.
+            e.HasOne(s => s.Room)
+                .WithMany(r => r.Settlements)
+                .HasForeignKey(s => s.RoomId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             e.HasOne(s => s.Payer)
                 .WithMany(m => m.SettlementsPaid)
