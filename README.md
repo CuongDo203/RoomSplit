@@ -66,7 +66,10 @@ RoomSplit/
 ├── RoomSplit.slnx
 ├── Directory.Build.props     Shared build settings (target framework, nullable, warnings)
 ├── Directory.Packages.props  All NuGet package versions (Central Package Management)
-├── docker-compose.yml        Local MySQL for development
+├── docker-compose.yml        Shared stack: MySQL + API
+├── docker-compose.override.yml  Dev settings (applied automatically)
+├── docker-compose.prod.yml   Staging/production settings
+├── envs/                     *.env.example templates for staging and production
 ├── Dockerfile                Multi-stage image for the API (see docs/docker.md)
 ├── .dockerignore             Keeps build output, .git and secrets out of the build context
 ├── .github/workflows/ci.yml  CI: format check, Release build, tests
@@ -163,29 +166,57 @@ Then open Swagger UI at **https://localhost:7054/swagger**.
 
 Health checks: `GET /health/live` (the process is up) and `GET /health/ready` (the database is reachable).
 
-Swagger UI and the OpenAPI document (`/openapi/v1.json`) are only available in the `Development` environment. Sample requests are in [`RoomSplit.Api/RoomSplit.Api.http`](RoomSplit.Api/RoomSplit.Api.http), which you can run from Visual Studio, Rider or the VS Code REST Client.
+Swagger UI and the OpenAPI document (`/openapi/v1.json`) are available in `Development` by default; other environments turn them on with `Swagger:Enabled` (on in `appsettings.Staging.json`, off in `appsettings.Production.json`). Sample requests are in [`RoomSplit.Api/RoomSplit.Api.http`](RoomSplit.Api/RoomSplit.Api.http), which you can run from Visual Studio, Rider or the VS Code REST Client.
 
 ### 6. Run in Docker (optional)
 
-Build the image from the repository root:
+Run MySQL and the API together with docker compose (requires `.env`, see step 1):
 
 ```bash
-docker build -t roomsplit-api:dev .
+docker compose up -d --build
 ```
 
-Run it. The image contains no connection string, so pass it as an environment variable:
+Then open Swagger UI at **http://localhost:8080/swagger** (change the host port with `API_PORT` in `.env`).
+
+- The API reaches MySQL at `Server=mysql;Port=3306`: `mysql` is the compose service name, resolved by Docker's internal DNS. The connection string is built from `MYSQL_ROOT_PASSWORD` in `.env`.
+- The API container does not run migrations. On a fresh database volume, run `dotnet ef database update` from the host first (step 4, using `Port=MYSQL_PORT`).
+- To run only MySQL (for example while using `dotnet run`): `docker compose up -d mysql`.
+- `docker compose down` stops and removes the containers but keeps the data. `docker compose down -v` also **deletes the database volume**.
+
+The compose setup is split into three files:
+
+| File | Used by | Contents |
+|---|---|---|
+| `docker-compose.yml` | all environments | Services, pinned images, volume, startup order |
+| `docker-compose.override.yml` | dev (read automatically) | Build from source, `Development`, MySQL port on the host |
+| `docker-compose.prod.yml` | staging and production (`-f`) | Prebuilt image, dedicated DB user, no MySQL port, resource limits, log rotation |
+
+### 7. Simulate staging and production locally (optional)
+
+Staging and production run the **same image**, built once and tagged with the commit, with different settings from `envs/<environment>.env`:
 
 ```bash
-docker run --rm -d --name roomsplit-api -p 8080:8080   -e ConnectionStrings__DefaultConnection="Server=<host>;Port=3306;Database=roomsplit;User=root;Password=<password>;"   roomsplit-api:dev
+cp envs/staging.env.example envs/staging.env          # set API_TAG and passwords
+cp envs/production.env.example envs/production.env    # use different passwords
 
-curl http://localhost:8080/health/live
+docker build -t roomsplit-api:<tag> .
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file envs/staging.env up -d     # http://localhost:8081
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file envs/production.env up -d  # http://localhost:8082
 ```
 
-- The container listens on port **8080** (HTTP only) and runs as the non-root user `app`.
-- It runs in the `Production` environment, so Swagger UI is off. Add `-e ASPNETCORE_ENVIRONMENT=Development` to enable it.
-- Inside the container, `localhost` is the container itself, not your machine. Connecting to the MySQL container from `docker-compose.yml` is not wired up yet.
+Each env file sets `COMPOSE_PROJECT_NAME`, so every environment gets its own containers, network and database volume, and can run alongside dev. MySQL is not reachable from the host, so create the schema with an idempotent script through `docker compose exec`. The steps are in [`docs/docker-multi-env.md`](docs/docker-multi-env.md#4-quy-trình-chạy-staging-và-production).
 
-Design notes: [`docs/docker.md`](docs/docker.md). Docker concepts: [`docs/docker-basics.md`](docs/docker-basics.md).
+The image can also be run on its own. It contains no connection string, so pass one as an environment variable:
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e ConnectionStrings__DefaultConnection="Server=host.docker.internal;Port=3307;Database=roomsplit;User=root;Password=<password>;" \
+  roomsplit-api:dev
+```
+
+The container listens on port **8080** (HTTP only), runs as the non-root user `app`, and defaults to the `Production` environment (no Swagger UI).
+
+Design notes: [`docs/docker.md`](docs/docker.md), [`docs/docker-compose.md`](docs/docker-compose.md), [`docs/docker-environments.md`](docs/docker-environments.md), [`docs/docker-multi-env.md`](docs/docker-multi-env.md). Docker concepts: [`docs/docker-basics.md`](docs/docker-basics.md).
 
 ## API overview
 
