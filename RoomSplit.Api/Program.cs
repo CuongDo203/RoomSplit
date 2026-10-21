@@ -44,7 +44,8 @@ var app = builder.Build();
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
 
-if (app.Environment.IsDevelopment())
+// Swagger is on in Development unless configured; other environments opt in via Swagger:Enabled.
+if (app.Configuration.GetValue("Swagger:Enabled", app.Environment.IsDevelopment()))
 {
     app.MapOpenApi();
     app.UseSwaggerUI(o => o.SwaggerEndpoint("/openapi/v1.json", "RoomSplit API v1"));
