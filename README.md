@@ -216,7 +216,7 @@ docker run --rm -p 8080:8080 \
 
 The container listens on port **8080** (HTTP only), runs as the non-root user `app`, and defaults to the `Production` environment (no Swagger UI).
 
-Design notes: [`docs/docker.md`](docs/docker.md), [`docs/docker-compose.md`](docs/docker-compose.md), [`docs/docker-environments.md`](docs/docker-environments.md), [`docs/docker-multi-env.md`](docs/docker-multi-env.md). Docker concepts: [`docs/docker-basics.md`](docs/docker-basics.md).
+Design notes: [`docs/docker.md`](docs/docker.md), [`docs/docker-compose.md`](docs/docker-compose.md), [`docs/docker-environments.md`](docs/docker-environments.md), [`docs/docker-multi-env.md`](docs/docker-multi-env.md). Docker concepts: [`docs/docker-basics.md`](docs/docker-basics.md), [`docs/docker-volumes-networks.md`](docs/docker-volumes-networks.md).
 
 ## API overview
 

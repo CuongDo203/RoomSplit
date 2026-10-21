@@ -2,7 +2,7 @@
 
 Phạm vi: **bước 2**, thêm service `api` vào docker-compose để `docker compose up` chạy cả API (image từ [Dockerfile](../Dockerfile)) lẫn MySQL, và API kết nối được tới MySQL.
 
-Liên quan: [docker-basics.md](docker-basics.md) (khái niệm), [docker.md](docker.md) (Dockerfile, bước 1).
+Liên quan: [docker-basics.md](docker-basics.md) (khái niệm), [docker.md](docker.md) (Dockerfile, bước 1), [docker-volumes-networks.md](docker-volumes-networks.md) (tìm hiểu sâu volume và network).
 
 > **Trạng thái:** đã chọn **A1 + B1 + C1 + D1 + E1** (2026-10-21) và đã triển khai. Kết quả kiểm tra ở [mục 7](#7-kết-quả-triển-khai).
 

@@ -11,6 +11,8 @@ Tài liệu học tập: các khái niệm nền tảng cần nắm trước khi
 5. [Tóm tắt nhanh](#5-tóm-tắt-nhanh)
 6. [Bước tiếp theo](#6-bước-tiếp-theo)
 
+Tìm hiểu sâu về volume và network: [docker-volumes-networks.md](docker-volumes-networks.md).
+
 ---
 
 ## 1. Bốn khái niệm chính
