@@ -1,0 +1,14 @@
+services:
+  mysql:
+    container_name: roomsplit-mysql
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+
+  api:
+    build: .
+    container_name: roomsplit-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__DefaultConnection: "Server=mysql;Port=3306;Database=roomsplit;User=root;Password=${MYSQL_ROOT_PASSWORD};"
+    ports:
+      - "${API_PORT:-8080}:8080"

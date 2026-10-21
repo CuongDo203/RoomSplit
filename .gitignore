@@ -73,6 +73,8 @@ secrets.json
 .env
 .env.*
 !.env.example
+# Compose env files with secrets, e.g. envs/staging.env (*.env.example templates are committed)
+*.env
 
 # ===========================
 # EF Core / local databases

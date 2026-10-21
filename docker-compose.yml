@@ -1,20 +1,12 @@
-# Local development database. Usage:
-#   cp .env.example .env   (then set MYSQL_ROOT_PASSWORD)
-#   docker compose up -d
-# If MySQL is already installed locally on 3306, set MYSQL_PORT=3307 in .env
-# and use Port=3307 in the connection string.
 services:
   mysql:
-    image: mysql:8.0
-    container_name: roomsplit-mysql
+    image: mysql:8.0.46
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in the env file}
       MYSQL_DATABASE: roomsplit
       TZ: Asia/Ho_Chi_Minh
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-    ports:
-      - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -22,6 +14,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  api:
+    image: roomsplit-api:${API_TAG:-dev}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
 
 volumes:
   mysql-data:

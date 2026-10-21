@@ -1,0 +1,28 @@
+services:
+  mysql:
+    environment:
+      MYSQL_USER: ${MYSQL_USER:?Set MYSQL_USER in the env file}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in the env file}
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1g
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  api:
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:?Set ASPNETCORE_ENVIRONMENT in the env file}
+      ConnectionStrings__DefaultConnection: "Server=mysql;Port=3306;Database=roomsplit;User=${MYSQL_USER};Password=${MYSQL_PASSWORD};"
+    ports:
+      - "${API_PORT:?Set API_PORT in the env file}:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512m
+    logging: *default-logging

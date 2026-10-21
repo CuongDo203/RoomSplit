@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- Stage 1: build ----------
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.402 AS build
 WORKDIR /src
 
 # Package manifests first: this layer (and the restore below) stays cached
@@ -16,7 +16,7 @@ RUN dotnet publish RoomSplit.Api/RoomSplit.Api.csproj \
     -c Release --no-restore -o /app/publish /p:UseAppHost=false
 
 # ---------- Stage 2: runtime ----------
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.13 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 

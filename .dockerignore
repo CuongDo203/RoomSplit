@@ -19,7 +19,8 @@
 # Not needed to build; excluding them keeps "COPY . ." cached when they change
 docs/
 *.md
-docker-compose.yml
+docker-compose*.yml
+envs/
 .env.example
 **/appsettings.*.example.json
 Dockerfile
