@@ -15,9 +15,24 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)))
-           .UseSnakeCaseNamingConvention());
+var seedSampleData = builder.Environment.IsDevelopment();
+
+builder.Services.AddDbContext<AppDbContext>((sp, options) =>
+{
+    // Retries transient errors (DB still starting, restarted, deadlock). Manual BeginTransaction()
+    // must then run inside db.Database.CreateExecutionStrategy().ExecuteAsync(...).
+    options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)),
+               mysql => mysql.EnableRetryOnFailure())
+           .UseSnakeCaseNamingConvention();
+
+    // Runs after Migrate()/EnsureCreated(), both from the app and from `dotnet ef database update`.
+    if (seedSampleData)
+    {
+        var clock = sp.GetRequiredService<IAppClock>();
+        options.UseSeeding((ctx, _) => DevDataSeeder.Seed(ctx, clock.Today))
+               .UseAsyncSeeding((ctx, _, ct) => DevDataSeeder.SeedAsync(ctx, clock.Today, ct));
+    }
+});
 
 // Fails fast at startup if the configured time zone id is unknown on this OS.
 var appTimeZone = TimeZoneInfo.FindSystemTimeZoneById(builder.Configuration["App:TimeZone"] ?? "Asia/Ho_Chi_Minh");
@@ -40,6 +55,15 @@ builder.Services.AddControllers()
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+// Dev convenience: apply pending migrations at startup. Staging/Production migrate with an
+// idempotent SQL script instead (docs/docker-multi-env.md).
+if (app.Configuration.GetValue("Database:MigrateOnStartup", app.Environment.IsDevelopment()))
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.MigrateAsync(app.Lifetime.ApplicationStopping);
+}
 
 // Configure the HTTP request pipeline.
 app.UseExceptionHandler();
