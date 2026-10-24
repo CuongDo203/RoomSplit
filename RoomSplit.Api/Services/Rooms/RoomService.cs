@@ -3,10 +3,11 @@ using RoomSplit.Api.Data;
 using RoomSplit.Api.Dtos;
 using RoomSplit.Api.Entities;
 using RoomSplit.Api.Exceptions;
+using RoomSplit.Api.Services.Members;
 
 namespace RoomSplit.Api.Services.Rooms;
 
-public class RoomService(AppDbContext db) : IRoomService
+public class RoomService(AppDbContext db, IMemberCache memberCache) : IRoomService
 {
     public Task<List<RoomResponse>> GetAllAsync(CancellationToken ct) =>
         db.Rooms
@@ -65,6 +66,8 @@ public class RoomService(AppDbContext db) : IRoomService
 
         db.Rooms.Remove(room);
         await db.SaveChangesAsync(ct);
+        // An empty member list may be cached for this room; drop it so GET members returns 404 right away.
+        await memberCache.InvalidateRoomAsync(id);
     }
 
     private static NotFoundException RoomNotFound(int id) => new($"Room {id} not found.");

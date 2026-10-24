@@ -39,6 +39,24 @@ var appTimeZone = TimeZoneInfo.FindSystemTimeZoneById(builder.Configuration["App
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IAppClock>(sp => new AppClock(sp.GetRequiredService<TimeProvider>(), appTimeZone));
 
+// Redis when ConnectionStrings:Redis is set (docker compose), otherwise an in-process cache so
+// `dotnet run` works without Redis. Cache:Enabled=false bypasses either (docs/redis-members-cache.md).
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
+if (string.IsNullOrWhiteSpace(redisConnectionString))
+{
+    builder.Services.AddDistributedMemoryCache();
+}
+else
+{
+    builder.Services.AddStackExchangeRedisCache(o =>
+    {
+        o.Configuration = redisConnectionString;
+        o.InstanceName = "roomsplit:";
+    });
+}
+builder.Services.Configure<CacheOptions>(builder.Configuration.GetSection(CacheOptions.SectionName));
+builder.Services.AddSingleton<IMemberCache, MemberCache>();
+
 builder.Services.AddScoped<IRoomService, RoomService>();
 builder.Services.AddScoped<IMemberService, MemberService>();
 builder.Services.AddScoped<ICategoryService, CategoryService>();

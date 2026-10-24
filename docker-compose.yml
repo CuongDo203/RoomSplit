@@ -15,11 +15,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # Pure cache: no persistence, no volume; when full, evict least recently used keys.
+  # Staging/production replace the command to add --requirepass (docker-compose.prod.yml).
+  redis:
+    image: redis:8.2.10-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api:
     image: roomsplit-api:${API_TAG:-dev}
     restart: unless-stopped
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:

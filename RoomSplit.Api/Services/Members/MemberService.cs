@@ -7,22 +7,27 @@ using RoomSplit.Api.Exceptions;
 
 namespace RoomSplit.Api.Services.Members;
 
-public class MemberService(AppDbContext db, IAppClock clock) : IMemberService
+public class MemberService(AppDbContext db, IAppClock clock, IMemberCache memberCache) : IMemberService
 {
+    // The whole member list of a room is cached under one key (a room has only a few members),
+    // so the status filter runs in memory and one invalidation covers every filter.
     public async Task<List<MemberResponse>> GetByRoomAsync(int roomId, MemberStatus? status, CancellationToken ct)
     {
-        await EnsureRoomExistsAsync(roomId, ct);
-
-        var query = db.Members.Where(m => m.RoomId == roomId);
-        if (status is not null)
+        var members = await memberCache.GetByRoomAsync(roomId, ct);
+        if (members is null)
         {
-            query = query.Where(m => m.Status == status);
+            await EnsureRoomExistsAsync(roomId, ct);
+
+            members = await db.Members
+                .Where(m => m.RoomId == roomId)
+                .OrderBy(m => m.Id)
+                .Select(m => ToResponse(m))
+                .ToListAsync(ct);
+
+            await memberCache.SetByRoomAsync(roomId, members, ct);
         }
 
-        return await query
-            .OrderBy(m => m.Id)
-            .Select(m => ToResponse(m))
-            .ToListAsync(ct);
+        return status is null ? members : members.Where(m => m.Status == status).ToList();
     }
 
     public async Task<MemberResponse> GetByIdAsync(int id, CancellationToken ct) =>
@@ -43,6 +48,7 @@ public class MemberService(AppDbContext db, IAppClock clock) : IMemberService
 
         db.Members.Add(member);
         await db.SaveChangesAsync(ct);
+        await memberCache.InvalidateRoomAsync(roomId);
 
         return ToResponse(member);
     }
@@ -54,6 +60,7 @@ public class MemberService(AppDbContext db, IAppClock clock) : IMemberService
         member.FullName = request.FullName.Trim();
         member.Phone = request.Phone?.Trim();
         await db.SaveChangesAsync(ct);
+        await memberCache.InvalidateRoomAsync(member.RoomId);
     }
 
     // A member who leaves keeps their history; they just can't join new expenses.
@@ -75,6 +82,7 @@ public class MemberService(AppDbContext db, IAppClock clock) : IMemberService
         member.LeftAt = leftAt;
         member.Status = MemberStatus.Left;
         await db.SaveChangesAsync(ct);
+        await memberCache.InvalidateRoomAsync(member.RoomId);
 
         return ToResponse(member);
     }
@@ -96,6 +104,7 @@ public class MemberService(AppDbContext db, IAppClock clock) : IMemberService
 
         db.Members.Remove(member);
         await db.SaveChangesAsync(ct);
+        await memberCache.InvalidateRoomAsync(member.RoomId);
     }
 
     private async Task<Member> FindMemberAsync(int id, CancellationToken ct) =>

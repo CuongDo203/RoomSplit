@@ -14,10 +14,24 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  redis:
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru",
+              "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in the env file}"]
+    environment:
+      # Read by redis-cli, so the healthcheck can authenticate.
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
+    logging: *default-logging
+
   api:
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:?Set ASPNETCORE_ENVIRONMENT in the env file}
       ConnectionStrings__DefaultConnection: "Server=mysql;Port=3306;Database=roomsplit;User=${MYSQL_USER};Password=${MYSQL_PASSWORD};"
+      ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD},abortConnect=false,connectTimeout=2000,syncTimeout=1000,asyncTimeout=1000"
     ports:
       - "${API_PORT:?Set API_PORT in the env file}:8080"
     deploy:

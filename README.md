@@ -9,7 +9,7 @@ One member pays a bill (electricity, water, internet, food, …). The cost is sp
 **Available now:**
 
 - Rooms: create, list, update, delete.
-- Members: add a member to a room, update a member, mark a member as having left the room (their history is kept).
+- Members: add a member to a room, update a member, mark a member as having left the room (their history is kept). A room's member list is cached in Redis for 60 seconds and invalidated whenever a member of the room changes.
 - Expense categories: Electricity, Water, Internet, Food, Household, Other.
 
 **Planned (MVP):**
@@ -53,8 +53,10 @@ Business rules:
 | Framework | ASP.NET Core Web API (.NET 10), controller-based |
 | ORM | Entity Framework Core **9.0.x** |
 | Database | MySQL 8.x via Pomelo.EntityFrameworkCore.MySql 9.0.0 |
+| Cache | Redis 8.x via `IDistributedCache` (Microsoft.Extensions.Caching.StackExchangeRedis) |
 | Naming | EFCore.NamingConventions: snake_case tables and columns |
 | API docs | Microsoft.AspNetCore.OpenApi + Swagger UI |
+| Containers | Docker, docker compose (MySQL, Redis, API) |
 
 > **Important:** EF Core must stay on **9.0.x**. Pomelo 9.0.0 has no build for EF Core 10.
 > Don't upgrade `Microsoft.EntityFrameworkCore.*` packages to 10.x. Also avoid packages that pull in EF Core 10 as a dependency, such as Identity 10.x or the EF Core InMemory or Sqlite 10.x providers. If one of these is added, `dotnet restore` fails with NU1608 or NU1107.
@@ -66,24 +68,27 @@ RoomSplit/
 ├── RoomSplit.slnx
 ├── Directory.Build.props     Shared build settings (target framework, nullable, warnings)
 ├── Directory.Packages.props  All NuGet package versions (Central Package Management)
-├── docker-compose.yml        Shared stack: MySQL + API
+├── docker-compose.yml        Shared stack: MySQL + Redis + API
 ├── docker-compose.override.yml  Dev settings (applied automatically)
 ├── docker-compose.prod.yml   Staging/production settings
+├── .env.example              Template for .env (dev compose variables)
 ├── envs/                     *.env.example templates for staging and production
 ├── Dockerfile                Multi-stage image for the API (see docs/docker.md)
 ├── .dockerignore             Keeps build output, .git and secrets out of the build context
 ├── .github/workflows/ci.yml  CI: format check, Release build, tests
+├── scripts/                  measure-members-cache.ps1 (response times with/without cache)
+├── docs/                     Design notes and learning material (Vietnamese)
 └── RoomSplit.Api/
-    ├── Common/        Shared helpers (ApiRoutes, IAppClock)
+    ├── Common/        Shared helpers (ApiRoutes, IAppClock, CacheOptions)
     ├── Controllers/   Thin HTTP layer: calls services, returns results
-    ├── Data/          AppDbContext (Fluent API configuration, seed data)
+    ├── Data/          AppDbContext (Fluent API configuration, seed data), DevDataSeeder
     ├── Dtos/          Request/response records (entities are never exposed)
     ├── Entities/      Domain entities and enums
     ├── Exceptions/    App exceptions and the handler that maps them to ProblemDetails
     ├── Migrations/    EF Core migrations
     └── Services/      Business logic and data access, one folder per feature
         ├── Categories/
-        ├── Members/
+        ├── Members/   (also IMemberCache: cached member lists)
         └── Rooms/
 ```
 
@@ -95,103 +100,129 @@ Requests flow from the controller to the service to `AppDbContext`. Services rep
 
 `AppExceptionHandler` turns these into [ProblemDetails](https://www.rfc-editor.org/rfc/rfc9457) responses. It also maps MySQL foreign-key and duplicate-key violations (errors 1451, 1452, 1062) to 409, as a safety net for concurrent requests.
 
+## Containers
+
+The dev stack (`docker compose up`) runs three containers on one Docker network. Containers reach each other by **service name** (`mysql`, `redis`) through Docker's internal DNS; the host reaches them through published ports.
+
+```
+                               Host machine
+   Browser / curl / Swagger UI       MySQL client            redis-cli
+              │                           │                      │
+      localhost:API_PORT          localhost:MYSQL_PORT    localhost:REDIS_PORT
+           (8080)                     (dev only)              (dev only)
+              │                           │                      │
+ ┌────────────┼───────── Docker network <project>_default ───────┼────────────┐
+ │            ▼                           ▼                      ▼            │
+ │     ┌──────────────┐  mysql:3306  ┌──────────────┐   ┌──────────────┐      │
+ │     │ api          │─────────────►│ mysql        │   │ redis        │      │
+ │     │ .NET 10      │              │ 8.0.46       │   │ 8.2.10       │      │
+ │     │ port 8080    │─────┐        │ port 3306    │   │ port 6379    │      │
+ │     └──────────────┘     │        └──────┬───────┘   └──────▲───────┘      │
+ │                          └───────────────┼──────────────────┘              │
+ │                             redis:6379   │                                 │
+ └──────────────────────────────────────────┼─────────────────────────────────┘
+                                            ▼
+                              volume <project>_mysql-data
+```
+
+| Service | Dev container name | Image | Port in container | Host port | Starts after | Data |
+|---|---|---|---|---|---|---|
+| `mysql` | `roomsplit-mysql` | `mysql:8.0.46` | 3306 | `MYSQL_PORT` (dev only) | | Named volume `mysql-data` |
+| `redis` | `roomsplit-redis` | `redis:8.2.10-alpine` | 6379 | `REDIS_PORT` (dev only) | | None: cache only, no persistence, 64 MB, LRU eviction |
+| `api` | `roomsplit-api` | `roomsplit-api:<tag>`, built from `Dockerfile` | 8080 | `API_PORT` | `mysql` and `redis` healthy | None |
+
+`<project>` is `roomsplit` in dev, `roomsplit-staging` / `roomsplit-prod` for staging and production (`COMPOSE_PROJECT_NAME`). In staging and production, MySQL and Redis have **no** host port and Redis requires a password.
+
 ## Getting started
 
-### 1. Prerequisites
+### 1. Software to install
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- MySQL 8.x running locally, or reachable over the network. The MySQL user needs permission to create the database. If you have Docker, you can start one with the bundled compose file:
+| Software | Version | Needed for | Check |
+|---|---|---|---|
+| [Git](https://git-scm.com/) | any recent | Cloning the repository | `git --version` |
+| [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) or Docker Engine + Compose plugin (Linux) | Compose v2 | Running MySQL, Redis and the API (option A); MySQL and Redis only (option B) | `docker version`, `docker compose version` |
+| [.NET 10 SDK](https://dotnet.microsoft.com/download) | 10.0.x | Option B (`dotnet run`), building, migrations | `dotnet --version` |
+| EF Core CLI `dotnet-ef` | **9.0.x** | Creating migrations; migration scripts for staging/production | `dotnet ef --version` |
+| PowerShell 7 + `curl` | `curl.exe` ships with Windows 10+ | `scripts/measure-members-cache.ps1` | `pwsh --version` |
 
-  ```bash
-  cp .env.example .env      # then set MYSQL_ROOT_PASSWORD
-  docker compose up -d
-  ```
+Install the EF Core CLI (version 9, matching EF Core 9):
 
-  If a local MySQL already uses port 3306, set `MYSQL_PORT=3307` in `.env` and use `Port=3307` in the connection string.
-- The EF Core CLI, **version 9**:
+```bash
+dotnet tool install --global dotnet-ef --version "9.0.*"
+# already installed with another version:
+dotnet tool update --global dotnet-ef --version "9.0.*"
+```
 
-  ```bash
-  dotnet tool install --global dotnet-ef --version "9.0.*"
-  ```
+Only Docker is needed to run the app with option A. A local MySQL or Redis installation is **not** needed.
 
-  If you already have a different version, run `dotnet tool update --global dotnet-ef --version "9.0.*"`.
-
-### 2. Clone and restore
+### 2. Clone and create `.env`
 
 ```bash
 git clone <repository-url>
 cd RoomSplit
-dotnet restore
+cp .env.example .env          # Windows PowerShell: Copy-Item .env.example .env
 ```
 
-### 3. Configure the database connection
+Edit `.env` and set at least `MYSQL_ROOT_PASSWORD`. If a port is already used on your machine (for example a local MySQL on 3306), change `MYSQL_PORT`, `REDIS_PORT` or `API_PORT`. See [Environment variables](#environment-variables).
 
-`appsettings.Development.json` is git-ignored, so each developer has their own copy. Create yours from the template:
+### 3A. Run everything in Docker (recommended)
 
 ```bash
+docker compose up -d --build
+docker compose ps             # mysql and redis "healthy", api "Up"
+```
+
+- Swagger UI: **http://localhost:8080/swagger** (port = `API_PORT`).
+- Health: `GET /health/live` (process up), `GET /health/ready` (database reachable).
+- In `Development` the API applies pending migrations at startup and, on an empty database, adds a sample room (`Database:MigrateOnStartup`, see [`docs/dev-migrate-seed.md`](docs/dev-migrate-seed.md)). No manual `dotnet ef database update` is needed.
+- See the member cache at work:
+
+  ```bash
+  curl http://localhost:8080/api/v1/rooms/1/members
+  docker exec roomsplit-redis redis-cli KEYS 'roomsplit:*'      # roomsplit:members:room:1
+  docker exec roomsplit-redis redis-cli TTL roomsplit:members:room:1
+  ```
+
+- Logs: `docker compose logs -f api`.
+- Stop: `docker compose down` (keeps the database). `docker compose down -v` also **deletes the database volume**.
+
+### 3B. Run the API with `dotnet run`, MySQL and Redis in Docker
+
+```bash
+docker compose up -d mysql redis
+
 cd RoomSplit.Api
 cp appsettings.Development.example.json appsettings.Development.json
 # Windows PowerShell: Copy-Item appsettings.Development.example.json appsettings.Development.json
 ```
 
-Then provide your MySQL password in one of two ways.
-
-**Option A (recommended): User Secrets.** The password is stored outside the repository.
+`appsettings.Development.json` is git-ignored, so each developer has their own copy. In it, set the MySQL password, and `Port=` to your `MYSQL_PORT`, in `ConnectionStrings:DefaultConnection`; set the port in `ConnectionStrings:Redis` to your `REDIS_PORT`. Alternatively, keep the password out of the file with User Secrets:
 
 ```bash
 dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=localhost;Port=3306;Database=roomsplit;User=root;Password=<your-password>;"
 ```
 
-**Option B: edit the file directly.** Put the password in `appsettings.Development.json`. The file is git-ignored, so the password won't be committed.
-
-In other environments, set the environment variable `ConnectionStrings__DefaultConnection` instead.
-
-### 4. Create the database
-
-Run this from `RoomSplit.Api/`:
-
-```bash
-dotnet ef database update
-```
-
-This creates the `roomsplit` database, all tables, and the seed categories.
-
-### 5. Run the API
+Then run:
 
 ```bash
 dotnet run --launch-profile https
 ```
 
-Then open Swagger UI at **https://localhost:7054/swagger**.
+Swagger UI: **https://localhost:7054/swagger**. Migrations and sample data are applied at startup, as in option A.
 
-Health checks: `GET /health/live` (the process is up) and `GET /health/ready` (the database is reachable).
+If `ConnectionStrings:Redis` is empty, the API uses an in-process memory cache instead of Redis, so it also runs without Redis.
 
-Swagger UI and the OpenAPI document (`/openapi/v1.json`) are available in `Development` by default; other environments turn them on with `Swagger:Enabled` (on in `appsettings.Staging.json`, off in `appsettings.Production.json`). Sample requests are in [`RoomSplit.Api/RoomSplit.Api.http`](RoomSplit.Api/RoomSplit.Api.http), which you can run from Visual Studio, Rider or the VS Code REST Client.
+### 4. Measure the member cache (optional)
 
-### 6. Run in Docker (optional)
+With the dev stack from step 3A running:
 
-Run MySQL and the API together with docker compose (requires `.env`, see step 1):
-
-```bash
-docker compose up -d --build
+```powershell
+./scripts/measure-members-cache.ps1 -RoomId 1 -Runs 10
 ```
 
-Then open Swagger UI at **http://localhost:8080/swagger** (change the host port with `API_PORT` in `.env`).
+The script times `GET /api/v1/rooms/{roomId}/members` in three scenarios: no cache (recreates the `api` container with `CACHE_ENABLED=false`), cache miss and cache hit. It prints every run plus min/average/median/max, and leaves the API with the cache on. Results and analysis: [`docs/redis-members-cache.md`](docs/redis-members-cache.md#9-kết-quả-đo).
 
-- The API reaches MySQL at `Server=mysql;Port=3306`: `mysql` is the compose service name, resolved by Docker's internal DNS. The connection string is built from `MYSQL_ROOT_PASSWORD` in `.env`.
-- The API container does not run migrations. On a fresh database volume, run `dotnet ef database update` from the host first (step 4, using `Port=MYSQL_PORT`).
-- To run only MySQL (for example while using `dotnet run`): `docker compose up -d mysql`.
-- `docker compose down` stops and removes the containers but keeps the data. `docker compose down -v` also **deletes the database volume**.
-
-The compose setup is split into three files:
-
-| File | Used by | Contents |
-|---|---|---|
-| `docker-compose.yml` | all environments | Services, pinned images, volume, startup order |
-| `docker-compose.override.yml` | dev (read automatically) | Build from source, `Development`, MySQL port on the host |
-| `docker-compose.prod.yml` | staging and production (`-f`) | Prebuilt image, dedicated DB user, no MySQL port, resource limits, log rotation |
-
-### 7. Simulate staging and production locally (optional)
+### 5. Simulate staging and production locally (optional)
 
 Staging and production run the **same image**, built once and tagged with the commit, with different settings from `envs/<environment>.env`:
 
@@ -204,7 +235,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file envs/
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file envs/production.env up -d  # http://localhost:8082
 ```
 
-Each env file sets `COMPOSE_PROJECT_NAME`, so every environment gets its own containers, network and database volume, and can run alongside dev. MySQL is not reachable from the host, so create the schema with an idempotent script through `docker compose exec`. The steps are in [`docs/docker-multi-env.md`](docs/docker-multi-env.md#4-quy-trình-chạy-staging-và-production).
+Each env file sets `COMPOSE_PROJECT_NAME`, so every environment gets its own containers, network and database volume, and can run alongside dev. These environments do not migrate at startup and MySQL is not reachable from the host, so create the schema with an idempotent script through `docker compose exec`. The steps are in [`docs/docker-multi-env.md`](docs/docker-multi-env.md#4-quy-trình-chạy-staging-và-production).
 
 The image can also be run on its own. It contains no connection string, so pass one as an environment variable:
 
@@ -214,9 +245,51 @@ docker run --rm -p 8080:8080 \
   roomsplit-api:dev
 ```
 
-The container listens on port **8080** (HTTP only), runs as the non-root user `app`, and defaults to the `Production` environment (no Swagger UI).
+The container listens on port **8080** (HTTP only), runs as the non-root user `app`, and defaults to the `Production` environment (no Swagger UI). Without `ConnectionStrings__Redis` it uses the in-process cache.
 
-Design notes: [`docs/docker.md`](docs/docker.md), [`docs/docker-compose.md`](docs/docker-compose.md), [`docs/docker-environments.md`](docs/docker-environments.md), [`docs/docker-multi-env.md`](docs/docker-multi-env.md). Docker concepts: [`docs/docker-basics.md`](docs/docker-basics.md), [`docs/docker-volumes-networks.md`](docs/docker-volumes-networks.md).
+The compose setup is split into three files:
+
+| File | Used by | Contents |
+|---|---|---|
+| `docker-compose.yml` | all environments | Services, pinned images, volume, healthchecks, startup order |
+| `docker-compose.override.yml` | dev (read automatically) | Build from source, `Development`, MySQL and Redis ports on the host, `CACHE_ENABLED` |
+| `docker-compose.prod.yml` | staging and production (`-f`) | Prebuilt image, dedicated DB user, Redis password, no MySQL/Redis ports, resource limits, log rotation |
+
+Design notes: [`docs/docker.md`](docs/docker.md), [`docs/docker-compose.md`](docs/docker-compose.md), [`docs/docker-environments.md`](docs/docker-environments.md), [`docs/docker-multi-env.md`](docs/docker-multi-env.md), [`docs/redis-members-cache.md`](docs/redis-members-cache.md). Concepts: [`docs/docker-basics.md`](docs/docker-basics.md), [`docs/docker-volumes-networks.md`](docs/docker-volumes-networks.md), [`docs/redis-basics.md`](docs/redis-basics.md).
+
+## Environment variables
+
+### Compose variables (`.env` for dev, `envs/<environment>.env` for staging/production)
+
+Docker compose reads these to fill in `docker-compose*.yml`. `.env` and `envs/*.env` are git-ignored; the committed templates are `.env.example` and `envs/*.env.example`.
+
+| Variable | Dev (`.env`) | Staging / production | Default | Description |
+|---|---|---|---|---|
+| `MYSQL_ROOT_PASSWORD` | **required** | **required** | | MySQL root password. In dev the API connects as root with it |
+| `MYSQL_PORT` | optional | not used | `3306` | Host port for MySQL |
+| `REDIS_PORT` | optional | not used | `6379` | Host port for Redis |
+| `API_PORT` | optional | **required** | `8080` (dev) | Host port for the API (staging example `8081`, production `8082`) |
+| `CACHE_ENABLED` | optional | not used | `true` | Becomes `Cache__Enabled` in the dev `api` container; `false` disables caching |
+| `COMPOSE_PROJECT_NAME` | not set (`roomsplit`) | **required** | | Separates containers, network and volume per environment |
+| `ASPNETCORE_ENVIRONMENT` | fixed `Development` | **required** | | `Staging` or `Production` |
+| `API_TAG` | optional | **required** | `dev` | Tag of the `roomsplit-api` image to run |
+| `MYSQL_USER`, `MYSQL_PASSWORD` | not used | **required** | | Dedicated MySQL user for the API |
+| `REDIS_PASSWORD` | not used | **required** | | Redis password (`--requirepass`); also used by the healthcheck |
+
+### Application settings
+
+ASP.NET Core reads these from `appsettings*.json`, User Secrets or environment variables. As an environment variable, `:` becomes `__` (for example `Cache:Enabled` → `Cache__Enabled`). Compose already sets the connection strings for each environment.
+
+| Setting (environment variable) | Default | Description |
+|---|---|---|
+| `ConnectionStrings__DefaultConnection` | none (**required**) | MySQL connection string, e.g. `Server=mysql;Port=3306;Database=roomsplit;User=root;Password=...;` |
+| `ConnectionStrings__Redis` | empty → in-process memory cache | StackExchange.Redis connection string, e.g. `redis:6379,password=...,abortConnect=false,connectTimeout=2000,syncTimeout=1000,asyncTimeout=1000` |
+| `Cache__Enabled` | `true` | `false` turns caching off (every request reads MySQL) |
+| `Cache__MembersTtlSeconds` | `60` | How long a room's member list stays cached |
+| `ASPNETCORE_ENVIRONMENT` | `Production` | `Development`, `Staging` or `Production` |
+| `Database__MigrateOnStartup` | `true` in Development, else `false` | Apply pending migrations at startup |
+| `Swagger__Enabled` | `true` in Development and Staging, `false` in Production | Serve Swagger UI and `/openapi/v1.json` |
+| `App__TimeZone` | `Asia/Ho_Chi_Minh` | Time zone of the business "today" |
 
 ## API overview
 
@@ -230,7 +303,7 @@ All endpoints are under `/api/v1`. The prefix is defined once in `Common/ApiRout
 | POST | `/api/v1/rooms` | Create a room |
 | PUT | `/api/v1/rooms/{id}` | Update a room |
 | DELETE | `/api/v1/rooms/{id}` | Delete a room. Returns 409 if the room has members, expenses or settlements |
-| GET | `/api/v1/rooms/{roomId}/members?status=Active` | List a room's members. The `status` filter is optional |
+| GET | `/api/v1/rooms/{roomId}/members?status=Active` | List a room's members. The `status` filter is optional. Cached for 60 s per room |
 | POST | `/api/v1/rooms/{roomId}/members` | Add a member to a room |
 | GET | `/api/v1/members/{id}` | Get a member |
 | PUT | `/api/v1/members/{id}` | Update a member |
