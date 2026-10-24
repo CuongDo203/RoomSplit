@@ -1,6 +1,8 @@
 # Docker volume và network: tìm hiểu sâu, áp dụng vào RoomSplit
 
-Tài liệu học tập. Mọi kết quả ghi trong bài được kiểm tra thực tế trên máy dev (Docker Engine 29.7.2, Docker Desktop trên WSL2) ngày 2026-10-21, bằng container thử nghiệm `busybox:1.37` và `mysql:8.0.46`. Chi tiết ở [mục 3](#3-kết-quả-thí-nghiệm).
+Tài liệu học tập. Mọi kết quả ghi trong bài được kiểm tra thực tế trên máy dev (Docker Engine 29.7.2, Docker Desktop trên WSL2) ngày 2026-10-21 và 2026-10-22, bằng container thử nghiệm `busybox:1.37` và `mysql:8.0.46`. Chi tiết ở [mục 3](#3-kết-quả-thí-nghiệm).
+
+> 🆕 **2026-10-22:** thêm [mục 2.9: network Docker tạo sẵn và network do user tạo](#29-đi-sâu-network-docker-tạo-sẵn-và-network-do-user-tạo).
 
 Kiến thức nền: [docker-basics.md](docker-basics.md) (image, container, layer, copy-on-write), [docker-compose.md](docker-compose.md) (compose của RoomSplit).
 
@@ -207,6 +209,8 @@ Linux cho mỗi container một **network namespace**: card mạng ảo, IP, b�
 
 Vì IP container **thay đổi** mỗi lần tạo lại, luôn gọi nhau **bằng tên**, không bao giờ hard-code IP.
 
+> 🔎 So sánh đầy đủ (DNS, cách ly, alias, IP tĩnh, cấu hình, vòng đời, network compose tạo vs tạo tay) ở [mục 2.9](#29-đi-sâu-network-docker-tạo-sẵn-và-network-do-user-tạo).
+
 ### 2.4. Bên trong một bridge network
 
 ```
@@ -289,6 +293,217 @@ networks:
 
 Một container vào hai network thì có hai card mạng (thí nghiệm 4: `eth0` 172.17.0.2 và `eth1` 172.23.0.3) và gọi được container ở cả hai bên.
 
+### 2.8. Không dùng compose: các container riêng lẻ giao tiếp thế nào?
+
+**Được.** Compose không có "phép thuật" riêng: nó chỉ gọi Docker API giống hệt `docker network create` + `docker run --network`. Khi chạy tay, bạn phải tự làm những việc compose làm hộ.
+
+Có 4 cách, đều đã chạy thử với image thật `roomsplit-api:dev` + `mysql:8.0.46` (thí nghiệm 11–15):
+
+| Cách | API kết nối MySQL bằng | Khuyến nghị |
+|---|---|---|
+| **1. User-defined network** | `Server=<tên container MySQL>;Port=3306` | ✅ **Cách chuẩn**, tương đương compose |
+| 2. Publish port MySQL, đi vòng qua host | `Server=host.docker.internal;Port=<cổng host>` | ⚠️ Chạy được, nhưng MySQL bị lộ ra host, đi đường vòng |
+| 3. `--link` trên bridge mặc định | `Server=<alias>;Port=3306` | ❌ **Đã lỗi thời (deprecated)**, Docker in cảnh báo |
+| 4. `--network container:<tên>` | `Server=127.0.0.1;Port=3306` | Trường hợp đặc biệt (sidecar), không dùng cho app thường |
+
+#### Cách 1: user-defined network (nên dùng)
+
+Đây chính là những gì compose làm cho RoomSplit, viết lại bằng tay:
+
+```bash
+# 1. Tạo network (compose tự làm: roomsplit_default) và volume (roomsplit_mysql-data)
+docker network create roomsplit-net
+docker volume create roomsplit-db
+
+# 2. MySQL: vào network, KHÔNG cần -p (API gọi qua network nội bộ)
+docker run -d --name mysql --network roomsplit-net \
+  -v roomsplit-db:/var/lib/mysql \
+  -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_DATABASE=roomsplit \
+  --health-cmd='mysqladmin ping -h localhost -psecret' --health-interval=5s \
+  mysql:8.0.46
+
+# 3. Tự chờ MySQL healthy (compose làm bằng depends_on: condition: service_healthy)
+until [ "$(docker inspect -f '{{.State.Health.Status}}' mysql)" = healthy ]; do sleep 2; done
+
+# 4. API: cùng network, gọi MySQL bằng TÊN CONTAINER; -p để trình duyệt trên host vào được
+docker run -d --name api --network roomsplit-net -p 8080:8080 \
+  -e ASPNETCORE_ENVIRONMENT=Development \
+  -e "ConnectionStrings__DefaultConnection=Server=mysql;Port=3306;Database=roomsplit;User=root;Password=secret;" \
+  roomsplit-api:dev
+```
+
+Kết quả thật: `GET /health/ready` → `Healthy (HTTP 200)`. Trong container API, `getent hosts lab-mysql` → `172.23.0.2`.
+
+**Quên `--network` thì sao?** Container API rơi vào bridge mặc định, không phân giải được tên `mysql`: `/health/ready` trả **HTTP 503** (thí nghiệm 12). Sửa ngay khi đang chạy bằng `docker network connect roomsplit-net api`, không cần tạo lại container: lập tức `HTTP 200`.
+
+So sánh việc phải tự làm:
+
+| Việc | Compose | Chạy tay |
+|---|---|---|
+| Tạo network, volume | Tự động, có tiền tố project | `docker network create`, `docker volume create` |
+| DNS theo tên | Tên service (`mysql`) | Tên container (`--name`) hoặc `--network-alias` |
+| Thứ tự khởi động, chờ healthy | `depends_on` + `condition` | Tự viết vòng lặp chờ |
+| Cấu hình | Lưu trong file YAML, commit vào git | Nằm trong lệnh dài, dễ gõ sai, khó chia sẻ |
+| Dọn dẹp | `docker compose down` | `docker rm -f`, `docker network rm` từng cái |
+
+#### Cách 2: publish port, đi vòng qua host
+
+```bash
+docker run -d --name mysql -p 13306:3306 ... mysql:8.0.46
+docker run -d --name api -p 8080:8080 \
+  -e "ConnectionStrings__DefaultConnection=Server=host.docker.internal;Port=13306;..." roomsplit-api:dev
+```
+
+Đường đi: API → host (`host.docker.internal`, trên máy này là `192.168.65.254`) → cổng 13306 → MySQL. Chạy được (`HTTP 200`), nhưng:
+- MySQL **bắt buộc** phải publish port, tức máy khác trong LAN có thể thấy.
+- Phụ thuộc cổng host, đổi cổng là phải sửa connection string.
+- `host.docker.internal` là tính năng của Docker Desktop. Trên Linux thuần phải thêm `--add-host=host.docker.internal:host-gateway`.
+
+Chỉ hợp lý khi một bên **không** chạy trong Docker, vd `dotnet run` trên host gọi MySQL trong container (cách dev RoomSplit đang làm với cổng 3307), hoặc container gọi `MySQL80` cài trên Windows.
+
+#### Cách 3: `--link` (lỗi thời)
+
+```bash
+docker run -d --name api --link mysql:db ... # rồi dùng Server=db
+```
+
+Docker ghi một dòng `172.17.0.2  db ...` vào `/etc/hosts` của container API (thí nghiệm 14). Nhược điểm: đây là ánh xạ **tĩnh**, MySQL tạo lại đổi IP là hỏng. Ngoài ra chỉ có một chiều, và Docker in cảnh báo *"Links on the default bridge network are deprecated and will be removed"*. Gặp trong tài liệu cũ thì biết, đừng dùng.
+
+#### Cách 4: dùng chung network namespace
+
+```bash
+docker run -d --name api --network container:mysql ... # Server=127.0.0.1
+```
+
+Container API **không có mạng riêng** mà mượn mạng của container MySQL: cùng IP, cùng `localhost`. Vì vậy `127.0.0.1:3306` trỏ đúng MySQL (thí nghiệm 15: `Healthy`). Hệ quả:
+- Không được dùng `-p` ở container mượn: `conflicting options: port publishing and the container type network mode`. Port phải publish ở container "chủ".
+- Hai container không được nghe trùng cổng.
+
+Dùng cho **sidecar**: container phụ trợ cần nhìn thấy đúng mạng của container chính, vd công cụ debug mạng (`docker run --rm -it --network container:roomsplit-api nicolaka/netshoot`), proxy, hoặc thu thập log. Kubernetes Pod hoạt động theo đúng nguyên lý này.
+
+### 2.9. Đi sâu: network Docker tạo sẵn và network do user tạo
+
+Kiểm tra thực tế ngày 2026-10-22 (thí nghiệm 16–26 ở [mục 3](#3-kết-quả-thí-nghiệm)).
+
+#### 2.9.1. Network từ đâu ra?
+
+Từ góc nhìn của Docker chỉ có **hai loại**: network **tạo sẵn** (pre-defined) và network **do user tạo** (user-defined). Network mà compose tạo cũng là user-defined, chỉ khác là có gắn thêm label.
+
+| Nguồn gốc | Ví dụ trên máy này | Ai tạo, khi nào | Xoá được không |
+|---|---|---|---|
+| **Tạo sẵn** (pre-defined) | `bridge`, `host`, `none` | Docker daemon, ngay khi khởi động | ❌ `bridge is a pre-defined network and cannot be removed` (thí nghiệm 21) |
+| **User tạo bằng tay** | `custom_bridge`, `frontend`, `backend` (thử nghiệm cũ) | Bạn, bằng `docker network create` | ✅ Khi không còn container nào dùng |
+| **User-defined do compose tạo** | `roomsplit_default`, `roomsplit-staging_default`, `roomsplit-prod_default` | `docker compose up`, tên `<project>_<network>` | ✅ `docker compose down` tự xoá |
+| Do tính năng khác tạo | `docker_gwbridge` | Docker Swarm (`docker swarm init`) | Xoá khi rời Swarm |
+
+> "Network mặc định" có hai nghĩa dễ nhầm: (1) network `bridge` mà `docker run` dùng khi không có `--network` (đây là network **tạo sẵn**), và (2) network `default` của một project compose (`roomsplit_default`). Network (2) là **user-defined**, nên có đủ mọi ưu điểm ở bảng dưới.
+
+#### 2.9.2. Bảng so sánh: bridge tạo sẵn và bridge user-defined
+
+| Tiêu chí | Bridge tạo sẵn (`bridge`) | Bridge user-defined | Thí nghiệm |
+|---|---|---|---|
+| DNS theo tên container | ❌ `ping: bad address 'lab-b'` | ✅ Tên container, tên service, alias | 1, 2, 17 |
+| DNS server trong `/etc/resolv.conf` | DNS của host được **chép vào** (`nameserver 192.168.65.7`, DNS của VM Docker Desktop) | DNS nhúng `nameserver 127.0.0.11` + `options ndots:0` | 16 |
+| Cách ly | Mọi container chạy không có `--network` đều chung một mạng và **ping nhau được bằng IP** (ICC bật) | Chỉ container trong cùng network thấy nhau | 17, 18 |
+| Alias (`--network-alias`) | ❌ `network-scoped aliases are only supported for user-defined networks` | ✅ | 19 |
+| IP tĩnh (`--ip`) | ❌ `user-specified IP address is supported on user-defined networks only` | ✅ (IP phải nằm trong subnet của network) | 20 |
+| Cấu hình subnet, gateway, MTU… | Toàn cục, sửa trong `daemon.json` (`bip`, `mtu`) rồi **khởi động lại Docker**, ảnh hưởng mọi container | Riêng từng network: `docker network create --subnet 10.10.0.0/24 --gateway ... --opt ...` | 20 |
+| `internal` (không ra Internet) | ❌ | ✅ `--internal` | 23 |
+| Tên bridge Linux trong VM | `docker0` | `br-<12 ký tự đầu của network ID>`, vd `br-3b9c4242bd0c` | 22 |
+| Subnet | Cố định `172.17.0.0/16` | Lấy lần lượt từ pool: `roomsplit_default` 172.20, staging 172.21, prod 172.22, `lab-net` 172.25 | 16 |
+| Gắn/gỡ khi container đang chạy | ✅ Được, trên Docker 29.7 (tài liệu cũ nói phải tạo lại container) | ✅ `docker network connect/disconnect` | 22 |
+| Xoá | ❌ Không xoá được | ✅ | 21 |
+| `--link` | Dùng được nhưng **deprecated** | Không cần (đã có DNS) | 14 |
+
+#### 2.9.3. Giải thích từng khác biệt
+
+**a. DNS: khác biệt lớn nhất.** Hai loại network cấu hình `resolv.conf` khác nhau:
+
+```
+# Container trên bridge tạo sẵn          # Container trên network user-defined
+nameserver 192.168.65.7                  nameserver 127.0.0.11
+                                         options ndots:0
+```
+
+- Bridge tạo sẵn: Docker chỉ **chép DNS của host** vào container. DNS của host không biết `lab-b` là gì, nên chỉ phân giải được tên Internet.
+- User-defined: mọi truy vấn đi qua **DNS nhúng** `127.0.0.11` do Docker chạy. Tên của container trong cùng network được trả về IP nội bộ, còn tên khác được chuyển tiếp ra DNS của host.
+- `/etc/hosts` ở **cả hai** loại chỉ có chính container đó (`172.17.0.2 2d70c54cdbef`). Như vậy tên container khác được phân giải qua DNS, không phải qua file hosts (trừ `--link`, cách cũ ghi thẳng vào `/etc/hosts`).
+
+**b. Cách ly: bridge tạo sẵn là "phòng chung".** Mọi container chạy bằng `docker run` không có `--network` đều rơi vào cùng network `bridge`, và Docker bật ICC (inter-container communication, `enable_icc: true`). Ví dụ: bạn chạy thử một image lạ bằng `docker run` (không `--network`), trong khi MySQL cũng đang ở `bridge` → image lạ đó kết nối được thẳng tới MySQL theo IP. Với network user-defined, container ở network khác **không** tới được (thí nghiệm 18: 100% packet loss).
+
+**c. Alias và IP tĩnh** chỉ có trên network user-defined, vì cả hai đều gắn với **một network cụ thể** (một container có thể mang alias `db` ở network này nhưng không ở network khác). Bridge tạo sẵn không có cơ chế quản lý tên/IP theo network như vậy.
+- IP tĩnh chỉ nên dùng khi thật cần (vd firewall chỉ cho phép một IP). Ứng dụng thường thì gọi bằng tên.
+
+**d. Cấu hình.** Muốn đổi subnet của `bridge` (vd vì trùng dải 172.17.x của VPN công ty) phải sửa `daemon.json` (Docker Desktop: Settings → Docker Engine) rồi khởi động lại Docker, ảnh hưởng **mọi** container. Network user-defined thì cấu hình riêng lúc tạo:
+
+```bash
+docker network create --subnet 10.10.0.0/24 --gateway 10.10.0.1 lab-fixed
+docker run --rm --network lab-fixed --ip 10.10.0.50 busybox:1.37 ip -4 addr show eth0
+# inet 10.10.0.50/24 ...   (thí nghiệm 20)
+```
+
+Compose tương đương:
+
+```yaml
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 10.10.0.0/24
+```
+
+**e. Hết dải IP.** Mỗi network user-defined lấy một subnet từ **pool mặc định** của Docker: các dải `172.17–172.31.x.x/16`, sau đó là `192.168.x.x/20`, tổng cộng khoảng 30 network. Tạo quá nhiều network (mỗi project compose ít nhất một) sẽ gặp lỗi `could not find an available, non-overlapping IPv4 address pool`. Cách xử lý: `docker network prune` (xoá network không dùng), hoặc khai báo `default-address-pools` với subnet nhỏ hơn (vd `/24`) trong `daemon.json`.
+
+**f. Bridge Linux bên dưới.** Mỗi bridge network là một bridge Linux thật trong VM của Docker Desktop: `docker0` cho `bridge`, `br-<id>` cho network user-defined. Thí nghiệm 22: VM có `docker0` và 8 bridge `br-…`, khớp với 8 network bridge user-defined trên máy. Dùng tên này khi debug bằng `ip link`, `tcpdump -i br-…`.
+
+#### 2.9.4. Network compose tạo và network tạo tay
+
+Cả hai đều là user-defined, khác nhau ở **ai quản lý vòng đời**. Compose đánh dấu network của mình bằng label:
+
+```json
+"com.docker.compose.project": "roomsplit",
+"com.docker.compose.network": "default",
+"com.docker.compose.version": "5.4.0",
+"com.docker.compose.config-hash": "812fa2e6…"
+```
+
+| Tình huống | Hành vi | Thí nghiệm |
+|---|---|---|
+| Network chưa có | `up` tạo `<project>_<network>` có label | 25 |
+| `down` | Chỉ xoá network **có label của project này** | 25 |
+| Đã có network trùng tên nhưng **tạo tay** (không label) | Compose vẫn dùng, nhưng cảnh báo `a network with name labproj_default exists but was not created by compose. Set external: true to use an existing network`. `down` **không** xoá network đó | 24 |
+| `external: true` | Compose chỉ dùng, không tạo, không xoá. Network chưa có thì `up` báo lỗi | 26 |
+
+**Khi nào tạo network bằng tay rồi khai báo `external`?** Khi network phải **sống lâu hơn** một project hoặc **dùng chung** giữa nhiều project. Ví dụ: một reverse proxy (Traefik/nginx) đứng trước cả staging và prod:
+
+```bash
+docker network create proxy-net
+```
+
+```yaml
+# docker-compose.prod.yml (ví dụ, RoomSplit chưa làm)
+services:
+  api:
+    networks: [default, proxy]    # default: nói chuyện với mysql; proxy: proxy gọi vào api
+networks:
+  proxy:
+    name: proxy-net               # tên thật, không thêm tiền tố project
+    external: true
+```
+
+Thí nghiệm 26: container `web` của project `labproj` vào network `lab-net` tạo tay, và container `lab-c` (không thuộc compose) ping được `web` bằng tên service. Sau `down`, `lab-net` vẫn còn.
+
+#### 2.9.5. Áp dụng vào RoomSplit
+
+| Câu hỏi | Trả lời |
+|---|---|
+| RoomSplit đang dùng loại nào? | User-defined do compose tạo (`roomsplit_default`, …). Đúng thực hành tốt, không cần đổi |
+| Có nên chạy container RoomSplit trên `bridge` tạo sẵn? | Không: mất DNS theo tên, nên `Server=mysql` không chạy được, và bị chung mạng với mọi container khác |
+| Khi nào cần network tạo tay + `external`? | Khi có reverse proxy dùng chung cho staging và prod (bước P3, chưa làm) |
+| Khi nào cần cố định subnet? | Khi dải `172.x` trùng với VPN hoặc LAN công ty (triệu chứng: bật Docker thì mất kết nối tới máy nội bộ). Hiện chưa gặp |
+
+Tóm lại: **bridge tạo sẵn chỉ để chạy thử nhanh một container đơn lẻ.** Hễ có hơn một container cần nói chuyện với nhau thì dùng network user-defined (compose làm sẵn việc này).
+
 ---
 
 ## 3. Kết quả thí nghiệm
@@ -307,6 +522,27 @@ Chạy ngày 2026-10-21 với container và network tạm (`lab-*`), đã xóa s
 | 8 | `docker run --rm mysql:8.0.46 ...` | Volume ẩn danh bị xóa cùng container |
 | 9 | Mount volume với `:ro`, thử ghi | ❌ `Read-only file system`. `Mountpoint` = `/var/lib/docker/volumes/lab-vol/_data` (trong VM) |
 | 10 | Inspect network compose `roomsplit_default` | Subnet `172.20.0.0/16`. Container MySQL có DNS names `roomsplit-mysql`, `mysql` và ID container |
+| 11 | Không compose: `docker network create` + MySQL + API cùng network, `Server=lab-mysql` | ✅ MySQL healthy sau ~12 s, `/health/ready` → `Healthy (HTTP 200)` |
+| 12 | Như 11 nhưng API không có `--network` | ❌ `HTTP 503`. Sau `docker network connect lab-net lab-api2` → `HTTP 200` |
+| 13 | MySQL `-p 13306:3306`, API `Server=host.docker.internal;Port=13306` | ✅ `HTTP 200`. `host.docker.internal` = `192.168.65.254` |
+| 14 | `--link lab-mysql-pub:db`, `Server=db` | ✅ `HTTP 200` kèm cảnh báo deprecated. `/etc/hosts` có `172.17.0.2 db` |
+| 15 | `--network container:lab-mysql-pub`, `Server=127.0.0.1` | ✅ `Healthy`. Thêm `-p` → lỗi `conflicting options` |
+
+Thí nghiệm 16–26 chạy ngày 2026-10-22 (cho [mục 2.9](#29-đi-sâu-network-docker-tạo-sẵn-và-network-do-user-tạo)), đã dọn sạch sau khi xong:
+
+| # | Thí nghiệm | Kết quả |
+|---|---|---|
+| 16 | `docker network inspect` `bridge`, `roomsplit_default`, `lab-net` mới tạo | `bridge`: option `default_bridge: true`, `enable_icc: true`, `bridge.name: docker0`, subnet `172.17.0.0/16`, không label. Network compose: label `com.docker.compose.*`, subnet 172.20/21/22. `lab-net`: 172.25, không label. `resolv.conf`: bridge tạo sẵn `nameserver 192.168.65.7`; user-defined `nameserver 127.0.0.11`, `options ndots:0` |
+| 17 | Hai container trên `bridge` tạo sẵn: ping bằng IP, rồi bằng tên | IP: ✅ 0% loss. Tên: ❌ `bad address 'lab-b'`. `/etc/hosts` chỉ có chính container |
+| 18 | Container trên `bridge` ping IP của container ở `lab-net` | ❌ 100% packet loss |
+| 19 | `docker run --network-alias db` (trên `bridge`) | ❌ `network-scoped aliases are only supported for user-defined networks` |
+| 20 | `--ip 172.17.0.50` trên `bridge`; `--ip` trên `lab-net` và trên `lab-fixed` (`--subnet 10.10.0.0/24`) | `bridge`: ❌ `user-specified IP address is supported on user-defined networks only`. `lab-net` với IP trong subnet: ✅, ngoài subnet: ❌. `lab-fixed`: ✅ `inet 10.10.0.50/24` |
+| 21 | `docker network rm bridge` | ❌ `bridge is a pre-defined network and cannot be removed` |
+| 22 | `docker network disconnect bridge` / `connect bridge` container đang chạy; `connect --alias x bridge`; `ip link` trong VM (`--net host`) | Gỡ/gắn: ✅ (Docker 29.7). Kèm alias: ❌. VM có `docker0` + 8 bridge `br-…`, có `br-3b9c4242bd0c` khớp ID `lab-net` |
+| 23 | Container trên network `--internal` gọi `http://example.com`; so sánh với `lab-net` | Internal: ❌ `bad address`, bảng định tuyến không có default route. `lab-net`: ✅ ra Internet |
+| 24 | Tạo tay `labproj_default`, rồi `docker compose -p labproj up` | ⚠️ Cảnh báo `exists but was not created by compose`, vẫn chạy. `down` không xoá network (label rỗng) |
+| 25 | Để compose tự tạo `labproj_default`, rồi `down` | `up`: `Network labproj_default Created`, có label. `down`: `Removed` |
+| 26 | Compose dùng `lab-net` với `external: true` | Container `lab-c` (ngoài compose) ping `web` bằng tên: ✅. `down` không xoá `lab-net` |
 
 Hiện trạng volume trên máy (`docker system df -v`):
 
@@ -315,7 +551,7 @@ Hiện trạng volume trên máy (`docker system df -v`):
 | `roomsplit_mysql-data` | 197.9 MB | DB dev |
 | `roomsplit-staging_mysql-data` | 198 MB | DB staging |
 | `roomsplit-prod_mysql-data` | 198 MB | DB production (mô phỏng) |
-| `14f0…`, `266f…` | 0 B, 49 MB | Volume ẩn danh cũ, từ thử nghiệm trước, có thể dọn |
+| `14f0…`, `266f…` | 0 B, 49 MB | Volume ẩn danh cũ, từ thử nghiệm trước. `266f…` đã bị xóa ngày 2026-10-22 bởi `docker volume prune -f` khi dọn thí nghiệm 11–15 (prune xóa **mọi** volume ẩn danh không container nào dùng, không chỉ volume vừa tạo) |
 | `my_volume` | 12 B | Volume thử nghiệm cũ |
 
 ---
@@ -336,7 +572,7 @@ Hiện trạng volume trên máy (`docker system df -v`):
 | # | Đề xuất | Lợi ích | Đánh đổi |
 |---|---|---|---|
 | 1 | Đổi `"${MYSQL_PORT:-3306}:3306"` thành `"127.0.0.1:${MYSQL_PORT:-3306}:3306"` trong override | MySQL dev chỉ truy cập từ chính máy này, máy khác trong mạng LAN (vd Wi-Fi quán cà phê) không thấy | Không truy cập được DB dev từ máy khác, điều mà dev một mình gần như không cần |
-| 2 | Dọn volume ẩn danh và `my_volume` cũ (`docker volume rm 14f0… 266f… my_volume`) | Giải phóng ~49 MB, danh sách gọn | Cần xác nhận không còn dùng. Volume `14f0…` đang gắn với container `floci` đã dừng |
+| 2 | Dọn volume ẩn danh `14f0…` và `my_volume` cũ (`266f…` đã bị xóa, xem mục 3) | Danh sách gọn | Cần xác nhận không còn dùng. Volume `14f0…` đang gắn với container `floci` đã dừng |
 | 3 | Network `backend` với `internal: true` cho MySQL ở production | MySQL không ra được Internet, giảm bề mặt tấn công | Chỉ có ý nghĩa khi có reverse proxy đứng trước API. Chưa cần ở MVP |
 
 Đề xuất 1 thay đổi cấu hình compose, đề xuất 2 xóa dữ liệu, nên cần bạn quyết định trước khi làm.
