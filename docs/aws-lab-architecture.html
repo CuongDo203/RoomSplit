@@ -1,0 +1,386 @@
+<title>RoomSplit AWS Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one wide network diagram as the centrepiece, reference tables below in a two-column grid. */
+:root {
+  --bg: #f6f7f8; --surface: #ffffff; --fg: #1b2129; --muted: #5d6874; --line: #c9d0d7;
+  --t-public: #fdf1dc; --t-public-s: #d9a645;
+  --t-app: #e0f1ee; --t-app-s: #3f9c8c;
+  --t-data: #e6e8f7; --t-data-s: #6670c4;
+  --f-in: #2c6bc9; --f-nat: #d0641b; --f-ssh: #8a4fc2; --f-db: #2f8a4a;
+  --nacl: #b8355a;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12161b; --surface: #1a2027; --fg: #e3e8ee; --muted: #94a0ad; --line: #36404b;
+  --t-public: #2e2617; --t-public-s: #c9973a;
+  --t-app: #14302c; --t-app-s: #4fb3a1;
+  --t-data: #1d2140; --t-data-s: #8790e0;
+  --f-in: #6aa2f0; --f-nat: #f08a45; --f-ssh: #b98be6; --f-db: #5cc27a;
+  --nacl: #ec6c8f; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #12161b; --surface: #1a2027; --fg: #e3e8ee; --muted: #94a0ad; --line: #36404b;
+  --t-public: #2e2617; --t-public-s: #c9973a;
+  --t-app: #14302c; --t-app-s: #4fb3a1;
+  --t-data: #1d2140; --t-data-s: #8790e0;
+  --f-in: #6aa2f0; --f-nat: #f08a45; --f-ssh: #b98be6; --f-db: #5cc27a;
+  --nacl: #ec6c8f; color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+header { display: grid; gap: 10px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: clamp(28px, 4vw, 40px); line-height: 1.1; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-weight: 600; font-size: 21px; margin: 0 0 10px; text-wrap: balance; }
+.lede { margin: 0; max-width: 68ch; color: var(--muted); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 0; padding: 0; list-style: none; }
+.chips li { font-family: var(--font-mono); font-size: 12.5px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+.chips b { font-weight: 500; color: var(--muted); margin-right: 6px; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 18px; min-width: 0; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.toolbar span { font-size: 13px; color: var(--muted); margin-right: 4px; }
+.toolbar button { font: 500 13px var(--font-body); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 5px 12px; cursor: pointer; }
+.toolbar button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.toolbar button:focus-visible { outline: 2px solid var(--f-in); outline-offset: 2px; }
+.phase-note { font-size: 13.5px; color: var(--muted); margin: 0 0 8px; min-height: 1.5em; }
+.scroll { overflow-x: auto; }
+figure { margin: 0; }
+figure svg { display: block; width: 100%; min-width: 860px; height: auto; }
+figcaption { font-size: 13.5px; color: var(--muted); margin-top: 10px; max-width: 80ch; }
+
+/* SVG styling */
+svg text { fill: var(--fg); font-family: var(--font-body); font-size: 13px; }
+svg .mono { font-family: var(--font-mono); font-size: 12px; }
+svg .small { font-size: 11px; fill: var(--muted); }
+svg .lbl { font-family: var(--font-display); font-weight: 600; font-size: 14px; }
+svg .ext { fill: var(--surface); stroke: var(--fg); stroke-width: 1.2; }
+svg .region { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 4; }
+svg .vpc { fill: var(--bg); stroke: var(--fg); stroke-width: 1.6; }
+svg .az { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 6 5; }
+svg .sn-public { fill: var(--t-public); stroke: var(--t-public-s); stroke-width: 1.2; }
+svg .sn-app { fill: var(--t-app); stroke: var(--t-app-s); stroke-width: 1.2; }
+svg .sn-data { fill: var(--t-data); stroke: var(--nacl); stroke-width: 2; stroke-dasharray: 7 4; }
+svg .res { fill: var(--surface); stroke: var(--fg); stroke-width: 1.1; }
+svg .future { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; }
+svg .future-t { fill: var(--muted); font-style: italic; font-size: 12px; }
+svg .igw { fill: var(--fg); }
+svg .igw-t { fill: var(--bg); font-family: var(--font-display); font-weight: 600; font-size: 14px; }
+svg .rt { fill: var(--surface); stroke: var(--line); stroke-width: 1.1; }
+svg .tie { stroke: var(--line); stroke-width: 1; stroke-dasharray: 3 3; fill: none; }
+svg .neutral { stroke: var(--fg); stroke-width: 1.6; fill: none; }
+svg .f { fill: none; stroke-width: 2.4; stroke-linejoin: round; }
+svg .f-in { stroke: var(--f-in); } svg .f-nat { stroke: var(--f-nat); } svg .f-ssh { stroke: var(--f-ssh); } svg .f-db { stroke: var(--f-db); }
+svg .num { stroke: var(--surface); stroke-width: 2; }
+svg .num-t { fill: #fff; font-family: var(--font-mono); font-size: 11px; font-weight: 500; }
+svg .c-in { fill: var(--f-in); } svg .c-nat { fill: var(--f-nat); } svg .c-ssh { fill: var(--f-ssh); } svg .c-db { fill: var(--f-db); }
+svg .t-nat { fill: var(--f-nat); } svg .t-nacl { fill: var(--nacl); font-size: 11.5px; font-family: var(--font-mono); }
+svg .arrow-in { fill: var(--f-in); } svg .arrow-nat { fill: var(--f-nat); } svg .arrow-ssh { fill: var(--f-ssh); } svg .arrow-db { fill: var(--f-db); } svg .arrow-n { fill: var(--fg); }
+svg [data-p] { transition: opacity .2s; }
+svg .off { opacity: .12; }
+@media (prefers-reduced-motion: reduce) { svg [data-p] { transition: none; } }
+
+/* Flow legend */
+.flows { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin: 0; padding: 0; list-style: none; }
+.flows li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; min-width: 0; }
+.dot { width: 22px; height: 22px; border-radius: 50%; color: #fff; font: 500 12px/22px var(--font-mono); text-align: center; }
+.flows strong { display: block; font-weight: 600; }
+.flows p { margin: 2px 0 0; font-size: 14px; color: var(--muted); }
+.d-in { background: var(--f-in); } .d-nat { background: var(--f-nat); } .d-ssh { background: var(--f-ssh); } .d-db { background: var(--f-db); }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 20px; }
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 500; }
+td code, li code, p code { font-family: var(--font-mono); font-size: 12.5px; }
+.tier { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.tp { background: var(--t-public-s); } .ta { background: var(--t-app-s); } .td { background: var(--t-data-s); }
+.later { color: var(--f-nat); font-weight: 500; }
+.note { font-size: 13.5px; color: var(--muted); margin: 10px 0 0; }
+footer { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">RoomSplit · AWS lab · chốt 28/10/2026</p>
+  <h1>Kiến trúc mạng RoomSplit trên AWS</h1>
+  <p class="lede">VPC lab cho tài khoản free: 2 AZ × 3 tầng subnet. Phần mạng miễn phí và được giữ lâu dài. NAT, EC2 và EICE chỉ bật theo từng giai đoạn để thí nghiệm, sau đó xóa.</p>
+  <ul class="chips">
+    <li><b>Region</b>R3 · us-east-1</li>
+    <li><b>Topology</b>B · 2 AZ × 3 tầng</li>
+    <li><b>NAT</b>N1 · NAT Gateway bật tạm</li>
+    <li><b>NACL</b>L2 · riêng tầng data</li>
+    <li><b>Truy cập</b>S3 · EC2 Instance Connect Endpoint</li>
+    <li><b>Công cụ</b>T1 · Console trước</li>
+  </ul>
+</header>
+
+<section class="panel" aria-label="Sơ đồ kiến trúc">
+  <div class="toolbar" role="group" aria-label="Chọn giai đoạn">
+    <span>Xem theo giai đoạn:</span>
+    <button type="button" id="ph-all" data-phase="9" aria-pressed="true">Tất cả</button>
+    <button type="button" id="ph-1" data-phase="1" aria-pressed="false">GĐ 1 · Mạng</button>
+    <button type="button" id="ph-2" data-phase="2" aria-pressed="false">GĐ 2 · Public vs private</button>
+    <button type="button" id="ph-3" data-phase="3" aria-pressed="false">GĐ 3 · NAT</button>
+    <button type="button" id="ph-4" data-phase="4" aria-pressed="false">GĐ 4 · Stateful vs stateless</button>
+  </div>
+  <p class="phase-note" id="phase-note">Đang hiện mọi thành phần của lab. Khung nét đứt xám là chỗ chừa sẵn cho bài deploy sau này.</p>
+  <div class="scroll">
+  <figure>
+  <svg id="diagram" viewBox="0 0 1120 880" role="img" aria-label="VPC 10.20.0.0/16 ở us-east-1 gồm 2 AZ, mỗi AZ có subnet public, app, data. Internet Gateway nối Internet với subnet public. Subnet app ra Internet qua NAT Gateway ở public-a. Admin SSH vào máy private qua EC2 Instance Connect Endpoint. Tầng data chỉ nhận cổng 3306 từ tầng app, được bảo vệ thêm bởi NACL.">
+    <defs>
+      <marker id="a-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-in"/></marker>
+      <marker id="a-nat" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-nat"/></marker>
+      <marker id="a-ssh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-ssh"/></marker>
+      <marker id="a-db" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-db"/></marker>
+      <marker id="a-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-n"/></marker>
+    </defs>
+
+    <!-- Outside AWS -->
+    <rect class="ext" x="40" y="16" width="220" height="44" rx="6"/>
+    <text x="150" y="43" text-anchor="middle">Bạn · Console / CLI</text>
+    <rect class="ext" x="385" y="16" width="200" height="44" rx="22"/>
+    <text x="485" y="43" text-anchor="middle" class="lbl">Internet</text>
+
+    <!-- Region + VPC -->
+    <rect class="region" x="8" y="74" width="1104" height="796" rx="10"/>
+    <text x="1104" y="92" text-anchor="end" class="small">Region us-east-1 (N. Virginia)</text>
+    <rect class="vpc" x="40" y="110" width="1060" height="740" rx="8"/>
+    <text x="1088" y="132" text-anchor="end" class="lbl">VPC roomsplit-lab-vpc</text>
+    <text x="1088" y="150" text-anchor="end" class="mono">10.20.0.0/16 · DNS hostnames on</text>
+
+    <!-- AZ columns -->
+    <rect class="az" x="60" y="142" width="420" height="688" rx="6"/>
+    <text x="72" y="164" class="small">AZ us-east-1a</text>
+    <rect class="az" x="490" y="142" width="410" height="688" rx="6"/>
+    <text x="502" y="164" class="small">AZ us-east-1b</text>
+
+    <!-- Public tier -->
+    <rect class="sn-public" x="72" y="210" width="396" height="160" rx="5"/>
+    <text x="86" y="236" class="lbl">public-a</text><text x="454" y="236" text-anchor="end" class="mono">10.20.0.0/24</text>
+    <rect class="sn-public" x="502" y="210" width="386" height="160" rx="5"/>
+    <text x="516" y="236" class="lbl">public-b</text><text x="874" y="236" text-anchor="end" class="mono">10.20.1.0/24</text>
+
+    <!-- App tier -->
+    <rect class="sn-app" x="72" y="390" width="396" height="200" rx="5"/>
+    <text x="86" y="416" class="lbl">app-a</text><text x="454" y="416" text-anchor="end" class="mono">10.20.10.0/24</text>
+    <rect class="sn-app" x="502" y="390" width="386" height="200" rx="5"/>
+    <text x="516" y="416" class="lbl">app-b</text><text x="874" y="416" text-anchor="end" class="mono">10.20.11.0/24</text>
+
+    <!-- Data tier (NACL) -->
+    <rect class="sn-data" x="72" y="610" width="396" height="200" rx="5"/>
+    <text x="86" y="636" class="lbl">data-a</text><text x="454" y="636" text-anchor="end" class="mono">10.20.20.0/24</text>
+    <text x="86" y="654" class="t-nacl">NACL nacl-data</text>
+    <rect class="sn-data" x="502" y="610" width="386" height="200" rx="5"/>
+    <text x="516" y="636" class="lbl">data-b</text><text x="874" y="636" text-anchor="end" class="mono">10.20.21.0/24</text>
+    <text x="516" y="654" class="t-nacl">NACL nacl-data</text>
+
+    <!-- Future placeholders -->
+    <rect class="future" x="90" y="262" width="170" height="48" rx="4"/>
+    <text x="175" y="291" text-anchor="middle" class="future-t">ALB (sau này)</text>
+    <rect class="future" x="708" y="262" width="166" height="48" rx="4"/>
+    <text x="791" y="291" text-anchor="middle" class="future-t">ALB (sau này)</text>
+    <rect class="future" x="520" y="446" width="354" height="48" rx="4"/>
+    <text x="697" y="475" text-anchor="middle" class="future-t">RoomSplit API :8080, ECS/EC2 (sau này)</text>
+    <rect class="future" x="90" y="666" width="170" height="48" rx="4"/>
+    <text x="175" y="695" text-anchor="middle" class="future-t">RDS MySQL (sau này)</text>
+    <rect class="future" x="520" y="666" width="354" height="48" rx="4"/>
+    <text x="697" y="695" text-anchor="middle" class="future-t">RDS standby · Redis (sau này)</text>
+
+    <!-- Lab resources -->
+    <g data-p="3">
+      <rect class="res" x="280" y="262" width="170" height="48" rx="4"/>
+      <text x="365" y="282" text-anchor="middle">NAT Gateway + EIP</text>
+      <text x="365" y="300" text-anchor="middle" class="small">GĐ 3 · xóa sau thí nghiệm</text>
+    </g>
+    <g data-p="2">
+      <rect class="res" x="520" y="262" width="170" height="48" rx="4"/>
+      <text x="605" y="282" text-anchor="middle">EC2 roomsplit-lab-web</text>
+      <text x="605" y="300" text-anchor="middle" class="small">sg web · RoomSplit :80</text>
+    </g>
+    <g data-p="2">
+      <rect class="res" x="90" y="446" width="170" height="48" rx="4"/>
+      <text x="175" y="466" text-anchor="middle">EICE</text>
+      <text x="175" y="484" text-anchor="middle" class="small">sg eice · miễn phí</text>
+    </g>
+    <g data-p="2">
+      <rect class="res" x="280" y="446" width="170" height="48" rx="4"/>
+      <text x="365" y="466" text-anchor="middle">EC2 test-private</text>
+      <text x="365" y="484" text-anchor="middle" class="small">sg app · không IP public</text>
+    </g>
+    <g data-p="4">
+      <rect class="res" x="280" y="666" width="170" height="48" rx="4"/>
+      <text x="365" y="686" text-anchor="middle">EC2 test-db</text>
+      <text x="365" y="704" text-anchor="middle" class="small">sg db · user data :3306</text>
+    </g>
+
+    <!-- Internet Gateway on the VPC edge -->
+    <line class="neutral" x1="485" y1="60" x2="485" y2="96" marker-start="url(#a-n)" marker-end="url(#a-n)"/>
+    <rect class="igw" x="435" y="96" width="100" height="40" rx="4"/>
+    <text x="485" y="121" text-anchor="middle" class="igw-t">IGW</text>
+
+    <!-- Route tables -->
+    <rect class="rt" x="912" y="210" width="176" height="160" rx="5"/>
+    <text x="926" y="236" class="lbl">rt-public</text>
+    <text x="926" y="260" class="mono">10.20.0.0/16 → local</text>
+    <text x="926" y="280" class="mono">0.0.0.0/0 → igw</text>
+    <text x="926" y="356" class="small">public-a, public-b</text>
+    <path class="tie" d="M888,290 H912"/>
+
+    <rect class="rt" x="912" y="390" width="176" height="200" rx="5"/>
+    <text x="926" y="416" class="lbl">rt-app-a · rt-app-b</text>
+    <text x="926" y="440" class="mono">10.20.0.0/16 → local</text>
+    <text x="926" y="460" class="mono">S3 → vpce-s3</text>
+    <text x="926" y="480" class="mono t-nat" data-p="3">0.0.0.0/0 → nat-a</text>
+    <text x="926" y="576" class="small">mỗi subnet app một bảng</text>
+    <path class="tie" d="M888,490 H912"/>
+
+    <rect class="rt" x="912" y="610" width="176" height="200" rx="5"/>
+    <text x="926" y="636" class="lbl">rt-data</text>
+    <text x="926" y="660" class="mono">10.20.0.0/16 → local</text>
+    <text x="926" y="684" class="small">không có đường ra ngoài</text>
+    <text x="926" y="796" class="small">data-a, data-b</text>
+    <path class="tie" d="M888,710 H912"/>
+
+    <text x="60" y="844" class="small">main route table: chỉ có local, không gắn subnet nào (subnet mới tạo mặc định không ra được Internet)</text>
+
+    <!-- ① Internet ↔ test-public (two-way via IGW) -->
+    <g data-p="2">
+      <path class="f f-in" d="M500,136 V190 H605 V262" marker-start="url(#a-in)" marker-end="url(#a-in)"/>
+      <circle class="num c-in" cx="560" cy="190" r="10"/><text x="560" y="194" text-anchor="middle" class="num-t">1</text>
+    </g>
+
+    <!-- ② test-private → NAT → IGW (outbound only) -->
+    <g data-p="3">
+      <path class="f f-nat" d="M365,446 V310" marker-end="url(#a-nat)"/>
+      <path class="f f-nat" d="M365,262 V190 H470 V136" marker-end="url(#a-nat)"/>
+      <circle class="num c-nat" cx="365" cy="380" r="10"/><text x="365" y="384" text-anchor="middle" class="num-t">2</text>
+      <text x="377" y="186" class="small t-nat">SNAT → EIP</text>
+    </g>
+
+    <!-- ③ Admin → EICE → test-private (SSH, no IGW) -->
+    <g data-p="2">
+      <path class="f f-ssh" d="M40,38 H24 V470 H90" marker-end="url(#a-ssh)"/>
+      <path class="f f-ssh" d="M260,470 H280" marker-end="url(#a-ssh)"/>
+      <circle class="num c-ssh" cx="24" cy="300" r="10"/><text x="24" y="304" text-anchor="middle" class="num-t">3</text>
+      <text x="270" y="440" text-anchor="middle" class="small">22</text>
+    </g>
+
+    <!-- ④ test-private → test-db :3306 through nacl-data -->
+    <g data-p="4">
+      <path class="f f-db" d="M365,494 V666" marker-end="url(#a-db)"/>
+      <circle class="num c-db" cx="365" cy="600" r="10"/><text x="365" y="604" text-anchor="middle" class="num-t">4</text>
+      <text x="377" y="640" class="small">3306</text>
+    </g>
+  </svg>
+  <figcaption>Subnet public và private được tạo giống hệt nhau. Chỉ route table quyết định subnet đó có đường <code>0.0.0.0/0</code> tới IGW (public), tới NAT (app) hay không có đường ra nào (data). Viền đỏ nét đứt là NACL stateless của tầng data.</figcaption>
+  </figure>
+  </div>
+</section>
+
+<section class="panel" aria-label="Luồng traffic">
+  <h2>Bốn luồng cần quan sát</h2>
+  <ul class="flows">
+    <li><span class="dot d-in">1</span><div><strong>Bạn ↔ RoomSplit trên EC2 · GĐ 2</strong><p>HTTP cổng 80 đi qua IGW theo cả hai chiều, vì <code>rt-public</code> có <code>0.0.0.0/0 → igw</code> và máy có IP public. SG <code>web</code> chỉ nhận từ IP của bạn. Trong máy chạy <code>mysql + redis + api</code> bằng docker compose.</p></div></li>
+    <li><span class="dot d-nat">2</span><div><strong>test-private → NAT → Internet · GĐ 3</strong><p>Chỉ đi ra được. Trước khi có NAT thì lệnh <code>curl</code> bị timeout. Sau khi thêm route tới <code>nat-a</code>, IP trả về là EIP của NAT. Từ ngoài vẫn không vào được máy này.</p></div></li>
+    <li><span class="dot d-ssh">3</span><div><strong>Bạn → EICE → máy private · GĐ 2</strong><p>SSH cổng 22 qua API của AWS, có kiểm tra quyền IAM. Không đi qua IGW, không cần IP public hay NAT.</p></div></li>
+    <li><span class="dot d-db">4</span><div><strong>app → data :3306 · GĐ 4</strong><p>Phải qua cả SG <code>db</code> (stateful) lẫn <code>nacl-data</code> (stateless). Thử bằng <code>curl -m 5 http://&lt;ip-test-db&gt;:3306</code>. Xóa rule outbound 1024–65535 của NACL thì kết nối bị timeout.</p></div></li>
+  </ul>
+</section>
+
+<div class="grid2">
+  <section class="panel">
+    <h2>CIDR và subnet</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Subnet</th><th>AZ</th><th>CIDR</th><th>Route table</th></tr></thead>
+      <tbody>
+        <tr><td><span class="tier tp"></span>public-a</td><td>1a</td><td><code>10.20.0.0/24</code></td><td>rt-public</td></tr>
+        <tr><td><span class="tier tp"></span>public-b</td><td>1b</td><td><code>10.20.1.0/24</code></td><td>rt-public</td></tr>
+        <tr><td><span class="tier ta"></span>app-a</td><td>1a</td><td><code>10.20.10.0/24</code></td><td>rt-app-a</td></tr>
+        <tr><td><span class="tier ta"></span>app-b</td><td>1b</td><td><code>10.20.11.0/24</code></td><td>rt-app-b</td></tr>
+        <tr><td><span class="tier td"></span>data-a</td><td>1a</td><td><code>10.20.20.0/24</code></td><td>rt-data</td></tr>
+        <tr><td><span class="tier td"></span>data-b</td><td>1b</td><td><code>10.20.21.0/24</code></td><td>rt-data</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Mỗi subnet <code>/24</code> dùng được 251 IP (AWS giữ 5). App gom lại thành <code>10.20.10.0/23</code>, nên NACL chỉ cần một rule cho cả hai subnet app. Các dải <code>10.20.2/12/22.0/24</code> để dành cho AZ thứ ba.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Route table</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Bảng</th><th>Routes</th><th>Gắn vào</th></tr></thead>
+      <tbody>
+        <tr><td>main</td><td><code>local</code></td><td>(không gắn)</td></tr>
+        <tr><td>rt-public</td><td><code>local</code>, <code>0.0.0.0/0 → igw</code></td><td>public-a, public-b</td></tr>
+        <tr><td>rt-app-a</td><td><code>local</code>, S3 → vpce, <span class="later"><code>0.0.0.0/0 → nat-a</code> (GĐ 3)</span></td><td>app-a</td></tr>
+        <tr><td>rt-app-b</td><td><code>local</code>, S3 → vpce, <span class="later"><code>0.0.0.0/0 → nat-a</code> (GĐ 3)</span></td><td>app-b</td></tr>
+        <tr><td>rt-data</td><td><code>local</code></td><td>data-a, data-b</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Lab dùng chung một NAT. Production sẽ có thêm <code>nat-b</code> và chỉ cần sửa route trong <code>rt-app-b</code>.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Security Group (stateful)</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>SG</th><th>Inbound</th><th>Gắn vào</th></tr></thead>
+      <tbody>
+        <tr><td>eice</td><td>(không có)</td><td>EICE</td></tr>
+        <tr><td>web</td><td>80 từ My IP; 22 từ <code>eice</code></td><td>EC2 roomsplit-lab-web</td></tr>
+        <tr><td>alb</td><td>80, 443 từ <code>0.0.0.0/0</code></td><td>ALB (sau này)</td></tr>
+        <tr><td>app</td><td>8080 từ <code>alb</code>; 22 từ <code>eice</code></td><td>test-private, API</td></tr>
+        <tr><td>db</td><td>3306 từ <code>app</code></td><td>test-db, RDS</td></tr>
+        <tr><td>redis</td><td>6379 từ <code>app</code></td><td>ElastiCache (sau này)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Rule tham chiếu SG khác, không dùng IP. Gói trả lời tự được cho qua nên không cần rule outbound tương ứng.</p>
+  </section>
+
+  <section class="panel">
+    <h2>NACL nacl-data (stateless)</h2>
+    <div class="tbl"><table>
+      <thead><tr><th>Chiều</th><th>#</th><th>Cổng</th><th>Nguồn / đích</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>In</td><td>100</td><td>3306</td><td><code>10.20.10.0/23</code></td><td>ALLOW</td></tr>
+        <tr><td>In</td><td>110</td><td>6379</td><td><code>10.20.10.0/23</code></td><td>ALLOW</td></tr>
+        <tr><td>In</td><td>*</td><td>tất cả</td><td><code>0.0.0.0/0</code></td><td>DENY</td></tr>
+        <tr><td>Out</td><td>100</td><td>1024–65535</td><td><code>10.20.10.0/23</code></td><td>ALLOW</td></tr>
+        <tr><td>Out</td><td>*</td><td>tất cả</td><td><code>0.0.0.0/0</code></td><td>DENY</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">Tầng public và app dùng NACL mặc định (cho phép tất cả). Rule outbound 100 cho gói trả lời đi về cổng ephemeral của app.</p>
+  </section>
+</div>
+
+<footer>Giá tham khảo ở us-east-1: phần mạng 0 USD; NAT Gateway khoảng 0,045 USD/giờ; EC2 t3.micro khoảng 0,0104 USD/giờ; mỗi IPv4 public 0,005 USD/giờ. Nếu dọn đúng hạn, cả lab tốn dưới 1 USD. Chi tiết và bảng ghi ID nằm trong <code>docs/aws-lab-architecture.md</code> của repo.</footer>
+</div>
+
+<script>
+(function () {
+  var svg = document.getElementById('diagram');
+  var note = document.getElementById('phase-note');
+  var buttons = document.querySelectorAll('.toolbar button');
+  var notes = {
+    '9': 'Đang hiện mọi thành phần của lab. Khung nét đứt xám là chỗ chừa sẵn cho bài deploy sau này.',
+    '1': 'GĐ 1: chỉ có mạng: VPC, 6 subnet, IGW, các route table, SG và nacl-data. Tất cả miễn phí.',
+    '2': 'GĐ 2: deploy RoomSplit lên EC2 roomsplit-lab-web ở public-b (gọi được từ IP của bạn), thêm EICE để SSH. Máy test-private là thí nghiệm tùy chọn.',
+    '3': 'GĐ 3: thêm NAT Gateway + EIP và route 0.0.0.0/0 → nat-a. Máy private đi ra được. Xóa NAT ngay sau khi thử.',
+    '4': 'GĐ 4: thêm EC2 test-db trong data-a, thử cổng 3306 rồi xóa rule outbound của NACL để thấy timeout.'
+  };
+  function show(phase) {
+    var p = Number(phase);
+    svg.querySelectorAll('[data-p]').forEach(function (el) {
+      el.classList.toggle('off', Number(el.getAttribute('data-p')) > p);
+    });
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.phase === phase)); });
+    note.textContent = notes[phase];
+  }
+  buttons.forEach(function (b) { b.addEventListener('click', function () { show(b.dataset.phase); }); });
+})();
+</script>

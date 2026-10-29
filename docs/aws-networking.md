@@ -545,6 +545,8 @@ Khi có sự cố, đi đúng theo từng bước này là tìm được chỗ h
 
 RoomSplit hiện chưa chạy trên AWS. Phần này là bản thiết kế để tham khảo khi đến bước deploy thật (CLAUDE.md, mục P3), **chưa phải quyết định**: khi làm thật sẽ viết tài liệu phương án riêng theo quy trình của dự án.
 
+> Bản phương án để làm thật trên tài khoản free (CIDR, subnet, route table, NACL, lộ trình theo giai đoạn): [aws-lab-architecture.md](aws-lab-architecture.md).
+
 ### 16.1 Sơ đồ
 
 ```
