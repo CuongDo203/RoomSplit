@@ -131,7 +131,7 @@ public-b: EC2 (IP public)                   public-a/b: ALB ── NAT (để EC
 
 | | I1. Build ngay trên EC2 | I2. ECR + IAM role cho EC2 | I3. `docker save` → copy qua EICE → `docker load` |
 |---|---|---|---|
-| Cách làm | Copy mã nguồn lên máy, `docker build` | Build ở máy dev, push ECR; EC2 pull bằng instance profile | Build ở máy dev, xuất file `.tar.gz` (khoảng 100 MB), `scp` qua tunnel EICE |
+| Cách làm | Copy mã nguồn lên máy, `docker build` | Build ở máy dev, push ECR; EC2 pull bằng instance profile | Build ở máy dev, xuất file `.tar` bằng `docker save` (khoảng 100 MB), `scp` qua tunnel EICE |
 | Dịch vụ/quyền thêm | Không | ECR repo, IAM role, `iam:PassRole` (cần root) | Không |
 | "Build một lần" | ❌ Build lại trên server; SDK .NET ngốn RAM máy 2 GB | ✅ | ✅ Cùng image đã chạy ở staging local |
 | Học được | Ít | Instance profile, credential tạm (bài IAM) | SSH tunnel qua EICE |
@@ -224,7 +224,7 @@ Chi tiết (Console + lệnh): [aws-lab-walkthrough.md](aws-lab-walkthrough.md),
 |---|---|---|
 | 2.1 | Tạo SG `web`, sửa SG `eice`; tạo EICE trong app-a (lần đầu có thể cần root) | EICE ở trạng thái `create-complete` |
 | 2.2 | Launch `t3.small` AL2023 ở **public-b**, bật auto-assign public IP, SG `web`, key pair, user data cài Docker + Compose | `aws ec2-instance-connect ssh --instance-id i-… --connection-type eice` vào được; `docker compose version` chạy |
-| 2.3 | Máy dev: `docker build`, `docker save \| gzip`, `dotnet ef migrations script --idempotent` | Có `roomsplit-api-<tag>.tar.gz`, `migrate.sql` |
+| 2.3 | Máy dev: `docker build`, `docker save`, `dotnet ef migrations script --idempotent` | Có `roomsplit-api-<tag>.tar`, `migrate.sql` |
 | 2.4 | Mở tunnel EICE, `scp` image + 2 file compose + `aws-lab.env` + `migrate.sql` | File có trên máy |
 | 2.5 | Trên EC2: `docker load`, `docker compose ... up -d`, đưa `migrate.sql` vào `mysql` | `docker compose ps` cả 3 healthy/running |
 | 2.6 | Từ trình duyệt: `http://<public-ip>/swagger`, `/health/ready`; tạo một room | Hoạt động. Thử từ 4G (IP khác) thì **timeout** vì SG chỉ cho IP của bạn |

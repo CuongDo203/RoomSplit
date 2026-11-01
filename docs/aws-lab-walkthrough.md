@@ -22,6 +22,7 @@ Bài này gồm **giai đoạn 0 (chuẩn bị)** và **giai đoạn 1 (dựng m
   - [2.6 Build image và chuẩn bị file](#26-build-image-và-chuẩn-bị-file-máy-dev)
   - [2.8 Chạy RoomSplit trên EC2](#28-chạy-roomsplit-trên-ec2)
   - [2.9 Truy cập từ Internet](#29-truy-cập-từ-internet)
+  - [2.11 Gỡ toàn bộ lab (về 0 đồng)](#211-gỡ-toàn-bộ-lab-về-0-đồng)
 - [Lỗi hay gặp](#lỗi-hay-gặp)
 
 ---
@@ -408,6 +409,27 @@ aws ec2-instance-connect ssh --instance-id $Id --connection-type eice `
   --os-user ec2-user --private-key-file $HOME\.ssh\roomsplit-lab
 ```
 
+**Lần SSH đầu tiên** sẽ có câu hỏi:
+
+```
+The authenticity of host '10.20.1.184 (<no hostip for proxy command>)' can't be established.
+ED25519 key fingerprint is SHA256:....
+Are you sure you want to continue connecting (yes/no/[fingerprint])?
+```
+
+Đây không phải lỗi. SSH chưa từng gặp máy này nên hỏi bạn có tin "chìa khóa nhận dạng" (host key) của nó không:
+
+| Phần | Ý nghĩa |
+|---|---|
+| `10.20.1.184` | IP **private** của instance trong subnet `public-b`; EICE nối tới IP này, không phải IP public |
+| `<no hostip for proxy command>` | Kết nối đi qua một *proxy command* (đường hầm EICE do `aws` CLI mở), nên SSH không tự tra được IP thật. Bình thường |
+| `key fingerprint` | Dấu vân tay host key của instance, tạo ra lúc máy boot lần đầu |
+
+Gõ **`yes`** rồi Enter (gõ đủ chữ, không phải `y`). SSH lưu host key vào `~/.ssh/known_hosts` và không hỏi lại ở những lần sau.
+
+- Muốn kiểm tra chặt hơn: EC2 → chọn instance → **Actions → Monitor and troubleshoot → Get system log**, tìm đoạn `BEGIN SSH HOST KEY FINGERPRINTS` rồi so với fingerprint trên màn hình.
+- Nếu sau này terminate rồi tạo lại instance và nó được cấp lại đúng IP này, SSH sẽ báo `REMOTE HOST IDENTIFICATION HAS CHANGED`. Khi đó xóa key cũ: `ssh-keygen -R 10.20.1.184`.
+
 Trong máy:
 
 ```bash
@@ -430,8 +452,10 @@ New-Item -ItemType Directory -Force artifacts | Out-Null
 
 # 1. Image (linux/amd64, khớp t3)
 docker build -t "roomsplit-api:$Tag" .
+if ($LASTEXITCODE -ne 0) { throw "docker build failed" }
 docker save -o "artifacts/roomsplit-api-$Tag.tar" "roomsplit-api:$Tag"
-tar -czf "artifacts/roomsplit-api-$Tag.tar.gz" -C artifacts "roomsplit-api-$Tag.tar"
+if ($LASTEXITCODE -ne 0) { throw "docker save failed" }
+(Get-Item "artifacts/roomsplit-api-$Tag.tar").Length / 1MB   # phải ~100 MB, không phải 0
 
 # 2. Migration script idempotent
 Push-Location RoomSplit.Api
@@ -445,6 +469,14 @@ $Tag
 
 Mở `envs/aws-lab.env`, điền `API_TAG` (giá trị `$Tag` vừa in), `MYSQL_ROOT_PASSWORD`, `MYSQL_PASSWORD`, `REDIS_PASSWORD`. File này đã bị git-ignore (`*.env`).
 
+**`REDIS_PASSWORD` điền gì?** Một chuỗi ngẫu nhiên do bạn tự đặt; không cần tạo trước ở đâu cả. Khi container `redis` khởi động, `--requirepass` đặt chính chuỗi này làm mật khẩu, và `api` dùng nó để kết nối. Không cần nhớ chuỗi này, vì không ai gõ tay. Nên dùng chuỗi **chỉ gồm chữ và số** (hex), vì mật khẩu được ghép vào connection string `redis:6379,password=...,abortConnect=false`: dấu `,` hoặc `=` sẽ làm hỏng chuỗi, còn `$` thì compose hiểu là biến. Cách tạo trong PowerShell (32 ký tự hex):
+
+```powershell
+-join ((1..16) | ForEach-Object { '{0:x2}' -f (Get-Random -Maximum 256) })
+```
+
+Có thể dùng cách này cho cả hai mật khẩu MySQL.
+
 ### 2.7 Copy file lên EC2
 
 `scp` đi qua EICE bằng `ProxyCommand`: lệnh `open-tunnel` không có `--local-port` sẽ nối thẳng stdin/stdout vào tunnel.
@@ -452,7 +484,7 @@ Mở `envs/aws-lab.env`, điền `API_TAG` (giá trị `$Tag` vừa in), `MYSQL_
 ```powershell
 $Proxy = "ProxyCommand=aws ec2-instance-connect open-tunnel --instance-id $Id"
 scp -i $HOME\.ssh\roomsplit-lab -o $Proxy -o HostKeyAlias=roomsplit-lab-web `
-  "artifacts/roomsplit-api-$Tag.tar.gz" artifacts/migrate.sql `
+  "artifacts/roomsplit-api-$Tag.tar" artifacts/migrate.sql `
   docker-compose.yml docker-compose.prod.yml envs/aws-lab.env `
   ec2-user@roomsplit-lab-web:/opt/roomsplit/
 ```
@@ -466,7 +498,8 @@ SSH vào máy (lệnh ở 2.5), rồi:
 ```bash
 cd /opt/roomsplit
 TAG=$(grep '^API_TAG=' aws-lab.env | cut -d= -f2)
-docker load -i "roomsplit-api-$TAG.tar.gz"
+docker load -i "roomsplit-api-$TAG.tar"   # in ra: Loaded image: roomsplit-api:<tag>
+docker images roomsplit-api               # phải thấy đúng tag này, nếu không thì dừng lại
 
 alias dc='docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file aws-lab.env'
 dc up -d
@@ -479,7 +512,7 @@ curl -s localhost/health/ready      # Healthy
 curl -s localhost/api/v1/categories # 6 category seed
 ```
 
-`docker load` nhận thẳng file `.tar.gz`. Container `mysql` không mở cổng ra máy chủ; `api` nghe 8080 trong container, compose map ra **cổng 80** của máy (`API_PORT=80`).
+`docker load` đọc trực tiếp file do `docker save` tạo ra. Không nén thêm bằng `tar -czf`, vì làm vậy sẽ bọc thêm một lớp tar bên ngoài và `docker load` báo `open .../repositories: no such file or directory`. Nén cũng gần như không giảm dung lượng, vì các layer vốn đã được nén. Container `mysql` không mở cổng ra máy chủ; `api` nghe 8080 trong container, compose map ra **cổng 80** của máy (`API_PORT=80`).
 
 ### 2.9 Truy cập từ Internet
 
@@ -508,6 +541,58 @@ Trên trình duyệt máy dev:
 
 Báo Claude Instance ID khi xong để kiểm tra và ghi vào mục 8 của [aws-lab-architecture.md](aws-lab-architecture.md).
 
+### 2.11 Gỡ toàn bộ lab (về 0 đồng)
+
+Dùng khi học xong và không muốn mất thêm đồng nào. Khác với 2.10 (Stop): **Terminate** sẽ xóa luôn ổ EBS, nên dữ liệu MySQL trên máy sẽ mất.
+
+**Cái gì đang tính tiền** (kiểm tra ngày 31/10/2026):
+
+| Tài nguyên | Giá ước tính (us-east-1) | Mất đi khi |
+|---|---|---|
+| EC2 `t3.small` đang chạy | ~0,021 USD/giờ | Terminate |
+| EBS 20 GB gp3 (`DeleteOnTermination = true`) | ~1,6 USD/tháng | Tự xóa khi terminate |
+| Public IPv4 tự gán | 0,005 USD/giờ (~3,6 USD/tháng) | Tự trả lại khi terminate |
+| EICE, Gateway Endpoint S3, VPC, subnet, route table, IGW, SG, NACL, key pair | **Miễn phí** | |
+
+→ Chỉ cần **bước 1** là chi phí về 0. Các bước 2–4 giúp tài khoản sạch sẽ, nhưng sau này muốn học tiếp thì phải dựng lại giai đoạn 1.
+
+**Bước 1: Terminate instance** (bắt buộc)
+
+1. EC2 → **Instances** → chọn `roomsplit-lab-web` → **Instance state → Terminate (delete) instance** → xác nhận.
+2. Đợi trạng thái chuyển thành `terminated` (khoảng 1–2 phút). Instance đã terminated vẫn hiện trong danh sách khoảng 1 giờ rồi tự biến mất, và không tính tiền.
+3. **Volumes**: không còn volume 20 GB. Nếu volume vẫn còn ở trạng thái `available` thì chọn nó → **Delete volume**.
+
+**Bước 2: Xóa EICE** (tùy chọn, nhưng phải làm trước khi xóa VPC)
+
+VPC → **Endpoints** → tab **EC2 Instance Connect Endpoints** → chọn `eice-…` → **Delete**. EICE có một ENI nằm trong subnet `app-a`; nếu còn ENI này thì VPC không xóa được.
+
+**Bước 3: Xóa VPC** (tùy chọn, bỏ hẳn lab)
+
+1. VPC → **Endpoints** → chọn Gateway Endpoint S3 → **Delete VPC endpoints**.
+2. VPC → **Your VPCs** → chọn `roomsplit-lab-vpc` → **Actions → Delete VPC**. Console sẽ liệt kê những thứ bị xóa kèm theo (subnet, route table, IGW, SG, NACL), gõ `delete` để xác nhận.
+3. Nếu báo lỗi `has dependencies`: thường là do EICE (bước 2) hoặc instance chưa terminate xong. Đợi thêm một chút rồi thử lại.
+4. **Không** xóa VPC mặc định `172.31.0.0/16`, vì nó miễn phí và nhiều dịch vụ dùng làm mặc định.
+
+**Bước 4: Dọn phần còn lại** (tùy chọn)
+
+| Ở đâu | Làm gì |
+|---|---|
+| EC2 → **Key pairs** | Xóa `roomsplit-lab-key` |
+| IAM (root) → **Policies** | Gỡ policy `roomsplit-lab-eice-connect` khỏi group `developers` rồi xóa policy |
+| **Billing → Budgets** | **Giữ lại**: miễn phí và vẫn cảnh báo nếu lỡ tạo thứ gì tốn tiền |
+| Máy dev | `ssh-keygen -R roomsplit-lab-web`; xóa `artifacts/`, `envs/aws-lab.env`; key `~/.ssh/roomsplit-lab*` có thể xóa hoặc giữ |
+
+**Kiểm tra cuối** (máy dev):
+
+```powershell
+aws ec2 describe-instances --filters "Name=instance-state-name,Values=pending,running,stopping,stopped" --query "Reservations[].Instances[].InstanceId"
+aws ec2 describe-volumes --query "Volumes[].VolumeId"
+aws ec2 describe-addresses --query "Addresses[].PublicIp"
+aws ec2 describe-nat-gateways --filter "Name=state,Values=pending,available" --query "NatGateways[].NatGatewayId"
+```
+
+Cả bốn lệnh đều trả `[]` là không còn tài nguyên tính tiền theo giờ. Vài ngày sau, vào **Billing → Bills** xem lại để chắc chắn không còn dòng phí nào tăng thêm.
+
 ---
 
 ## Lỗi hay gặp
@@ -523,10 +608,13 @@ Báo Claude Instance ID khi xong để kiểm tra và ghi vào mục 8 của [aw
 | `AccessDeniedException ... ec2-instance-connect:OpenTunnel` | Chưa gắn policy `roomsplit-lab-eice-connect` | Bước 2.1a |
 | EICE kẹt ở `create-failed` | Tài khoản chưa có service-linked role, tạo bằng `dev-readonly` | Xóa, tạo lại bằng root (2.1b) |
 | SSH qua EICE treo rồi timeout | SG `eice` thiếu outbound 22 → `web`, hoặc SG `web` thiếu inbound 22 từ `eice` | Bước 2.2 |
+| `InvalidInstanceID.Malformed ... Invalid id: "i-<12 chữ số>"` | Dán nhầm **Account ID** (12 chữ số, góc phải trên Console) vào sau `i-`. Instance ID thật là `i-` + 17 ký tự hex (0–9, a–f) | Lấy ID đúng: `aws ec2 describe-instances --query "Reservations[].Instances[].[InstanceId,Tags[?Key=='Name']\|[0].Value]" --output table` |
 | `Permission denied (publickey)` | Sai key hoặc sai user (`ec2-user`, không phải `ubuntu`/`root`) | Kiểm tra `--private-key-file`, `--os-user` |
 | Không có `docker` / `docker compose` | User data chưa chạy xong hoặc lỗi | `sudo tail -n 50 /var/log/cloud-init-output.log` |
 | `permission denied ... docker.sock` | Phiên SSH mở trước khi `ec2-user` vào group `docker` | Thoát rồi SSH lại |
 | Container `mysql` restart liên tục, `dmesg` có `Out of memory` | Thiếu RAM (nhầm `t3.micro` hoặc không có swap) | Dùng `t3.small`, kiểm tra `free -h` |
+| `docker load` báo `open /var/lib/docker/tmp/docker-import-.../repositories: no such file or directory` | File không phải output của `docker save`: hoặc rỗng (build/save ở 2.6 lỗi), hoặc bị bọc thêm một lớp `tar -czf` (bản cũ của hướng dẫn này) | `ls -la` xem dung lượng (~100 MB). Nếu là `.tar.gz` bọc ngoài: `tar -xzOf <file>.tar.gz \| docker load`. Nếu rỗng: build lại theo 2.6 rồi `scp` lại |
+| `dc up` báo `pull access denied for roomsplit-api` | Máy chưa có image `roomsplit-api:<API_TAG>` (`docker load` lỗi hoặc `API_TAG` khác tag đã load), nên compose thử pull từ Docker Hub | Xem `docker images`; sửa `docker load` hoặc `API_TAG` |
 | `/health/ready` trả `Unhealthy` | Sai mật khẩu trong `aws-lab.env`, hoặc MySQL chưa healthy | `dc logs api`, `dc ps` |
 | API trả 500 khi gọi `/api/v1/rooms` | Chưa chạy `migrate.sql` | Bước 2.8 |
 | Trình duyệt timeout dù máy đang chạy | IP nhà đã đổi so với rule My IP, hoặc gõ `https://` | Sửa SG; dùng `http://` |
