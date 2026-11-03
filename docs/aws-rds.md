@@ -306,7 +306,7 @@ Internet → ALB (public-a/b) → app EC2 (app-a, SG app) → RDS (data-a)
 - Nhược: không gọi được API từ Internet, kém trực quan hơn giai đoạn 2.
 
 ### 7.4 Q4 và Q5
-- **Q4**: lab giữ **tự quản** (giống hiện tại, không tốn phí, không cần quyền IAM mới). Secrets Manager để dành cho phần nâng cao (đọc secret bằng IAM role của EC2, mà profile hiện chưa có quyền tạo role).
+- **Q4**: lab giữ **tự quản** (giống hiện tại, không tốn phí, không cần quyền IAM mới). Secrets Manager để dành cho phần nâng cao (đọc secret bằng IAM role của EC2, mà profile hiện chưa có quyền tạo role). Chi tiết và phương án: [aws-secrets-manager.md](aws-secrets-manager.md).
 - **Q5**: thêm `docker-compose.rds.yml` (override khi dùng RDS: `api` lấy `ConnectionStrings__DefaultConnection` thẳng từ env file, ví dụ biến `DB_CONNECTION`), chạy `docker compose ... up -d --no-deps api redis` để không khởi động container `mysql`. Cách khác là tách hẳn `mysql` khỏi `docker-compose.yml` dùng chung, nhưng như vậy phải sửa dev/staging/prod đang chạy ổn, nên không đề xuất.
 
 ### 7.5 Đề xuất
