@@ -116,3 +116,5 @@ CLAUDE.md
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+artifacts/*.sql
