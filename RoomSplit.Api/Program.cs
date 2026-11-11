@@ -110,4 +110,7 @@ app.MapControllers();
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = c => c.Tags.Contains("ready") });
 
+// Which commit this build came from (operational endpoint, outside /api/v1 like /health).
+app.MapGet("/version", () => new { commit = BuildInfo.Commit, version = BuildInfo.Version });
+
 app.Run();

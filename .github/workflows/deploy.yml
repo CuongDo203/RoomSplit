@@ -1,0 +1,93 @@
+name: Deploy (build & push ECR)
+
+# Merging a PR into main is a push to main. See docs/deploy-ecr.md.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:      # manual run; only succeeds from main (role trust is locked to main)
+
+permissions:
+  id-token: write         # request the OIDC JWT
+  contents: read
+
+# Back-to-back merges run one after another; never cancel, so every main commit gets an image.
+concurrency:
+  group: deploy-ecr-main
+  cancel-in-progress: false
+
+env:
+  ECR_REPOSITORY: roomsplit-api
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore RoomSplit.slnx
+
+      - name: Check formatting
+        run: dotnet format RoomSplit.slnx --no-restore --verify-no-changes
+
+      - name: Build
+        run: dotnet build RoomSplit.slnx --no-restore -c Release
+
+      - name: Test
+        run: dotnet test RoomSplit.slnx --no-build -c Release
+
+  build-push:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ECR_PUSH_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: gh-deploy-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tags are immutable: a re-run for the same commit would be rejected, so skip it.
+      - name: Skip if image already exists
+        id: exists
+        run: |
+          if aws ecr describe-images --repository-name "$ECR_REPOSITORY" \
+               --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Image $ECR_REPOSITORY:$GITHUB_SHA already in ECR, skipping build."
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.exists.outputs.found == 'false'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        if: steps.exists.outputs.found == 'false'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          build-args: GIT_SHA=${{ github.sha }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # No attestation manifests: ECR lists them as untagged artifacts next to the image.
+          provenance: false
+
+      - name: Summary
+        run: |
+          echo "### Image" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"

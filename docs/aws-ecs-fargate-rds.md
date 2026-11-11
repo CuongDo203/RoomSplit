@@ -166,6 +166,8 @@ thật vào shell history hoặc repository.
 
 ### 8.1 Tạo ECR và push image
 
+> Đã có CI tự build + push khi merge `main` (tag = commit SHA, repo immutable): xem [deploy-ecr.md](deploy-ecr.md). Các lệnh dưới đây là cách push tay.
+
 ```powershell
 $Region = "us-east-1"
 $AccountId = (aws sts get-caller-identity --query Account --output text)
