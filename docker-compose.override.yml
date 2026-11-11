@@ -14,7 +14,11 @@ services:
     container_name: roomsplit-api
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-      ConnectionStrings__DefaultConnection: "Server=mysql;Port=3306;Database=roomsplit;User=root;Password=${MYSQL_ROOT_PASSWORD};"
+      Database__Host: mysql
+      Database__Port: "3306"
+      Database__Name: roomsplit
+      Database__User: root
+      Database__Password: ${MYSQL_ROOT_PASSWORD}
       ConnectionStrings__Redis: "redis:6379,abortConnect=false,connectTimeout=2000,syncTimeout=1000,asyncTimeout=1000"
       # false = no cache at all (baseline for scripts/measure-members-cache.ps1).
       Cache__Enabled: ${CACHE_ENABLED:-true}

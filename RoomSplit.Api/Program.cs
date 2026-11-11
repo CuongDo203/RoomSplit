@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using RoomSplit.Api.Common;
 using RoomSplit.Api.Data;
 using RoomSplit.Api.Exceptions;
@@ -12,13 +13,19 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+// Connection fields (Database:Host, Port, Name, User, Password) are validated when first used
+// (startup migration, first request) and at app start.
+builder.Services.AddOptions<DatabaseOptions>()
+    .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 var seedSampleData = builder.Environment.IsDevelopment();
 
 builder.Services.AddDbContext<AppDbContext>((sp, options) =>
 {
+    var connectionString = sp.GetRequiredService<IOptions<DatabaseOptions>>().Value.BuildConnectionString();
+
     // Retries transient errors (DB still starting, restarted, deadlock). Manual BeginTransaction()
     // must then run inside db.Database.CreateExecutionStrategy().ExecuteAsync(...).
     options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36)),

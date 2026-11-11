@@ -30,7 +30,11 @@ services:
   api:
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:?Set ASPNETCORE_ENVIRONMENT in the env file}
-      ConnectionStrings__DefaultConnection: "Server=mysql;Port=3306;Database=roomsplit;User=${MYSQL_USER};Password=${MYSQL_PASSWORD};"
+      Database__Host: mysql
+      Database__Port: "3306"
+      Database__Name: roomsplit
+      Database__User: ${MYSQL_USER}
+      Database__Password: ${MYSQL_PASSWORD}
       ConnectionStrings__Redis: "redis:6379,password=${REDIS_PASSWORD},abortConnect=false,connectTimeout=2000,syncTimeout=1000,asyncTimeout=1000"
     ports:
       - "${API_PORT:?Set API_PORT in the env file}:8080"
