@@ -1,0 +1,27 @@
+name: AWS OIDC check
+
+on:
+  workflow_dispatch:          # chạy tay từ tab Actions
+  push:
+    branches: [main, develop]
+    paths:
+      - .github/workflows/aws-oidc-check.yml
+
+# Mặc định GITHUB_TOKEN chỉ được đọc code; thêm id-token để xin JWT OIDC.
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  whoami:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+          role-session-name: gh-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Who am I
+        run: aws sts get-caller-identity
