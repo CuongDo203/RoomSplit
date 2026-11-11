@@ -186,6 +186,49 @@ Khuyến nghị: bài này dùng **cả repo** (đơn giản, đủ tiêu chí "
 
 > ⚠️ Cạm bẫy wildcard: `repo:CuongDo203/*` cho **mọi repo** của tài khoản `CuongDo203`; `repo:CuongDo203/RoomSplit*` (thiếu dấu `:`) khớp cả repo `RoomSplit-fork` hay `RoomSplitEvil` nếu ai đó tạo dưới cùng owner. Luôn giữ dấu `:` ngay sau tên repo.
 
+### 5.3 Chú ý: `sub` dạng immutable (có `@<id>`)
+
+Repo RoomSplit đang bật **immutable subject** cho OIDC. Khi đó GitHub không phát `sub` theo tên như bảng 5.2, mà gắn thêm ID số sau owner và sau tên repo:
+
+```
+repo:CuongDo203@109535588/RoomSplit@1425829002:ref:refs/heads/develop
+```
+
+| Phần | Ý nghĩa |
+|---|---|
+| `109535588` | ID của tài khoản owner `CuongDo203` |
+| `1425829002` | ID của repo `RoomSplit` |
+
+Hai ID này cố định: đổi tên user/repo thì ID giữ nguyên; xóa repo rồi tạo lại trùng tên thì repo mới có ID **khác**. Vì vậy khóa theo ID chống được kiểu tấn công "chiếm lại tên repo/tài khoản cũ để assume role", an toàn hơn khóa theo tên.
+
+Hậu quả: trust policy viết `repo:CuongDo203/RoomSplit:*` sẽ **không khớp** và job lỗi `Not authorized to perform sts:AssumeRoleWithWebIdentity` (dù provider, `aud`, `AWS_ROLE_ARN`, `id-token: write` đều đúng). Trust policy phải dùng:
+
+```json
+"StringLike": {
+  "token.actions.githubusercontent.com:sub": "repo:CuongDo203@109535588/RoomSplit@1425829002:*"
+}
+```
+
+Các dạng branch/tag/PR/environment ở 5.2 vẫn giữ nguyên, chỉ phần `repo:<owner>/<repo>` đổi thành `repo:<owner>@<owner-id>/<repo>@<repo-id>`.
+
+**Cách xem ID / dạng `sub` thật:**
+
+```bash
+# 1. Prefix đúng như GitHub dùng trong sub (use_immutable_subject = true nghĩa là đang bật)
+gh api repos/CuongDo203/RoomSplit/actions/oidc/customization/sub
+# {"use_default":true,"use_immutable_subject":true,
+#  "sub_claim_prefix":"repo:CuongDo203@109535588/RoomSplit@1425829002"}
+
+# 2. Lấy riêng từng ID
+gh api repos/CuongDo203/RoomSplit --jq '.id, .owner.id'
+# 1425829002   (repo id)
+# 109535588    (owner id)
+```
+
+Không có `gh`: mở `https://api.github.com/repos/CuongDo203/RoomSplit`, xem trường `id` (repo) và `owner.id`. Muốn biết chính xác `sub` của một lần chạy (kể cả lần bị từ chối): CloudTrail → *Event history* → Event name `AssumeRoleWithWebIdentity`.
+
+> Có thể tắt immutable subject phía GitHub (API `PUT .../actions/oidc/customization/sub`) để quay về dạng theo tên, nhưng kém an toàn hơn; nên sửa trust policy thay vì tắt.
+
 ---
 
 ## 6. Step by step cho RoomSplit
@@ -454,6 +497,7 @@ Giới hạn cần nói rõ (không thần thánh hóa): OIDC không chống đ�
 |---|---|---|
 | `Credentials could not be loaded` / `Unable to get ACTIONS_ID_TOKEN_REQUEST_URL env variable` | Thiếu `permissions: id-token: write` | Thêm ở cấp workflow hoặc job |
 | `Not authorized to perform sts:AssumeRoleWithWebIdentity` | `sub` không khớp: sai hoa thường tên repo, job có `environment:` (sub đổi sang dạng `environment:`), chạy từ PR (sub = `pull_request`) mà policy khóa theo branch | Xem sub thật trong CloudTrail (event lỗi) rồi sửa policy |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` dù mọi thứ trông đúng | Repo bật immutable subject: `sub` là `repo:CuongDo203@109535588/RoomSplit@1425829002:...`, không khớp `repo:CuongDo203/RoomSplit:*` | Sửa `sub` trong trust policy theo [5.3](#53-chú-ý-sub-dạng-immutable-có-id) |
 | `No OpenIDConnect provider found in your account for https://token.actions.githubusercontent.com` | Chưa tạo provider, hoặc tạo ở tài khoản khác | Bước 1 |
 | `Incorrect token audience` | Provider thiếu audience `sts.amazonaws.com` | Thêm audience vào provider |
 | Workflow chạy trên PR từ fork không lấy được token | GitHub không cấp `id-token` cho PR từ fork (đúng thiết kế, để fork không lấy được quyền AWS) | Không chạy job AWS trên `pull_request` từ fork |
@@ -481,7 +525,7 @@ Sau khi đạt bài này, có thể nối vào kế hoạch đã có (trả lờ
 | Provider ARN | `arn:aws:iam::<account-id>:oidc-provider/token.actions.githubusercontent.com` |
 | Role | `github-actions-roomsplit` |
 | Trust action | `sts:AssumeRoleWithWebIdentity` |
-| Điều kiện `sub` | `repo:CuongDo203/RoomSplit:*` |
+| Điều kiện `sub` | `repo:CuongDo203@109535588/RoomSplit@1425829002:*` (repo bật immutable subject, xem 5.3) |
 | GitHub Variables | `AWS_ROLE_ARN`, `AWS_REGION` |
 | Workflow | `.github/workflows/aws-oidc-check.yml` |
 | Quyền workflow | `id-token: write`, `contents: read` |
